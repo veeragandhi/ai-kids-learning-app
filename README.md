@@ -1,33 +1,132 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# MiloLearn 🚀
 
-## Getting Started
+AI-powered personalized learning for children.
 
-First, run the development server:
+MiloLearn is an interactive learning platform designed to help children learn through intelligent conversations, personalized educational content, and adaptive AI experiences.
+
+The goal is to make learning engaging, accessible, and personalized while giving children a friendly environment to explore concepts through AI.
+
+## Problem
+
+Traditional learning platforms often provide static content and one-size-fits-all experiences.
+
+Children learn differently:
+
+* Different learning speeds
+* Different interests
+* Different styles of understanding
+
+MiloLearn aims to create adaptive learning experiences that respond to each child's needs.
+
+## Features
+
+* AI-powered educational assistance
+* Interactive question-answer experience
+* Personalized learning flow
+* Child-friendly interface
+* Retrieval-Augmented Generation (RAG)
+* Semantic search with embeddings
+* Context-aware AI responses
+
+## Tech Stack
+
+### Frontend
+
+* Next.js
+* React
+* TypeScript
+* Tailwind CSS
+
+### AI Stack
+
+* Ollama
+* Mistral
+* Nomic Embed Text
+* RAG pipeline
+
+### Development
+
+* Git
+* GitHub
+
+## How It Works
+
+1. Educational content is processed and indexed
+2. Content is converted into vector embeddings
+3. User questions are transformed into embeddings
+4. Similar content is retrieved
+5. Relevant context is sent to the AI model
+6. AI generates personalized responses
+
+## Installation
+
+Clone the repository:
+
+```bash
+git clone https://github.com/veeragandhi/MiloLearn.git
+```
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+Start Ollama:
+
+```bash
+ollama serve
+```
+
+Pull required models:
+
+```bash
+ollama pull mistral
+ollama pull nomic-embed-text
+```
+
+Run the application:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```text
+http://localhost:3000
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Future Roadmap
 
-## Learn More
+* Voice interactions
+* Gamification and rewards
+* Parent dashboard
+* Progress tracking
+* Personalized learning paths
+* Multiple languages
+* Quiz generation
 
-To learn more about Next.js, take a look at the following resources:
+## Screenshots
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Add screenshots and demo GIFs here.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Security
+
+Do not commit:
+
+* .env
+* API keys
+* Secrets
+* Credentials
+
+## Vision
+
+Build an AI-native learning platform that helps children learn in a personalized and engaging way.
+
+## Author
+
+Veera Gandhi
 
 ## Application Screenshots
 
