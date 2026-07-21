@@ -1,10 +1,8 @@
 # AmigosNest 🚀
 
-AI-powered personalized learning for children.
+AmigosNest is an AI-powered learning companion for families. Parents can upload textbooks, worksheets, PDFs and other learning materials. AmigosNest generates personalized lessons, quizzes and explanation tailored to each child's learning level.
 
-MiloLearn is an interactive learning platform designed to help children learn through intelligent conversations, personalized educational content, and adaptive AI experiences.
-
-The goal is to make learning engaging, accessible, and personalized while giving children a friendly environment to explore concepts through AI.
+The application uses RAG to understand uploaded content and provide contextual, age-appropriate learning experiences.
 
 ## Problem
 
