@@ -1,4 +1,4 @@
-# MiloLearn 🚀
+# AmigosNest 🚀
 
 AI-powered personalized learning for children.
 
