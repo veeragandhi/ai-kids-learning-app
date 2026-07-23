@@ -37,7 +37,7 @@ export default function AskPage() {
         <div className="bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden">
           {/* Header */}
           <div className="bg-gradient-to-r from-indigo-600 to-blue-600 p-8 text-white">
-            <h1 className="text-3xl font-bold">Ask Milo</h1>
+            <h1 className="text-3xl font-bold">Ask AmigosNest</h1>
             <p className="mt-2 text-indigo-100">
               Ask questions about your uploaded learning material.
             </p>
@@ -85,7 +85,7 @@ export default function AskPage() {
                   Thinking...
                 </span>
               ) : (
-                "Ask Milo"
+                "Ask AmigosNest"
               )}
             </button>
 

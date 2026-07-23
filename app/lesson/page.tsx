@@ -428,7 +428,7 @@ export default function LessonPage() {
                   <div className="mb-3 text-7xl">🦉</div>
 
                   <p className="text-center font-bold text-slate-700">
-                    Milo the AI Teacher
+                    AmigosNest the AI Teacher
                   </p>
 
                   <p className="mt-2 px-6 text-center text-sm text-slate-500">
@@ -456,7 +456,7 @@ export default function LessonPage() {
                 <div className="mb-4 animate-bounce text-6xl">🦉</div>
 
                 <h2 className="text-2xl font-bold text-slate-800">
-                  Milo is preparing your lesson...
+                  AmigosNest is preparing your lesson...
                 </h2>
 
                 <p className="mt-2 text-slate-500">{loadingText}</p>
@@ -602,7 +602,7 @@ export default function LessonPage() {
 
                 <div>
                   <p className="font-bold text-slate-800">
-                    Milo says:
+                    AmigosNest says:
                   </p>
 
                   <p className="mt-1 text-slate-600">
@@ -772,7 +772,7 @@ export default function LessonPage() {
                     </p>
                   </div>
 
-                  {/* Milo owl mascot */}
+                  {/* AmigosNest owl mascot */}
                   <div className="absolute bottom-5 right-5 text-4xl drop-shadow">🦉</div>
                 </div>
               ))}

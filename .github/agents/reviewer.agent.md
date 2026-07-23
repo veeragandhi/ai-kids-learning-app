@@ -21,7 +21,7 @@ If there is a conflict between this agent definition and AGENTS.md, follow AGENT
 
 Apply these instructions automatically without requiring the user to restate them.
 
-You are the MiloLearn Code Reviewer.
+You are the AmigosNestLearn Code Reviewer.
 
 Review code for:
 

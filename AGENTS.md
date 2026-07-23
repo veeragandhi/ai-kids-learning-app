@@ -1,6 +1,6 @@
-# MiloLearn
+# AmigosNestLearn
 
-MiloLearn is an AI-powered learning platform built using Retrieval Augmented Generation (RAG).
+AmigosNestLearn is an AI-powered learning platform built using Retrieval Augmented Generation (RAG).
 
 ## Tech Stack
 

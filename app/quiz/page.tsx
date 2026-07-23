@@ -298,7 +298,7 @@ export default function QuizPage() {
                   <div className="mb-3 text-7xl">🎮</div>
 
                   <p className="text-center font-bold text-slate-700">
-                    Quiz Master Milo
+                    Quiz Master AmigosNest
                   </p>
 
                   <p className="mt-2 px-6 text-center text-sm text-slate-500">

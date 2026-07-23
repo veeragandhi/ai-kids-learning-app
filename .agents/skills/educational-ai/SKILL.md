@@ -1,6 +1,6 @@
 # Educational AI Skill
 
-MiloLearn is a learning platform.
+AmigosNestLearn is a learning platform.
 
 Answers should:
 

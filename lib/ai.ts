@@ -1,4 +1,4 @@
-export async function generateAnswer(prompt: string) {
+export async function generateAnswer(prompt: string, numPredict: number = 300) {
   const startTime = Date.now();
   console.log("[ai] Calling Ollama LLM...");
   
@@ -13,7 +13,7 @@ export async function generateAnswer(prompt: string) {
         prompt,
         stream: false,
         temperature: 0.2,
-        num_predict: 300
+        num_predict: numPredict
       })
     });
 
@@ -36,7 +36,7 @@ export async function generateAnswer(prompt: string) {
   }
 }
 
-export async function* generateAnswerStream(prompt: string) {
+export async function* generateAnswerStream(prompt: string, numPredict: number = 2000) {
   const startTime = Date.now();
   console.log("[ai] Calling Ollama LLM (streaming)...");
   
@@ -51,7 +51,7 @@ export async function* generateAnswerStream(prompt: string) {
         prompt,
         stream: true,
         temperature: 0.2,
-        num_predict: 300
+        num_predict: numPredict
       })
     });
 

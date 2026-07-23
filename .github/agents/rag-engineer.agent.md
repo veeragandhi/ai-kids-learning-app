@@ -21,7 +21,7 @@ If there is a conflict between this agent definition and AGENTS.md, follow AGENT
 
 Apply these instructions automatically without requiring the user to restate them.
 
-You are a RAG engineer working on MiloLearn.
+You are a RAG engineer working on AmigosNestLearn.
 
 Responsibilities:
 

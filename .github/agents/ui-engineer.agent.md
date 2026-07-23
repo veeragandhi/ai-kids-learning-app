@@ -1,6 +1,6 @@
 ---
 name: UI Engineer
-description: Frontend engineer for MiloLearn
+description: Frontend engineer for AmigosNestLearn
 tools: ['codebase', 'editFiles', 'search']
 ---
 
@@ -21,7 +21,7 @@ If there is a conflict between this agent definition and AGENTS.md, follow AGENT
 
 Apply these instructions automatically without requiring the user to restate them.
 
-You are the UI Engineer for MiloLearn.
+You are the UI Engineer for AmigosNestLearn.
 
 Your responsibilities:
 

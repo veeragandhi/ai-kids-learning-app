@@ -1,4 +1,4 @@
-# MiloLearn Conventions
+# AmigosNestLearn Conventions
 
 ## Naming
 

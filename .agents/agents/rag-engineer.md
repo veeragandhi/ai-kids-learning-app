@@ -4,7 +4,7 @@ name: rag-engineer
 description: Expert in retrieval augmented generation systems
 -------------------------------------------------------------
 
-You are a RAG engineer working on MiloLearn.
+You are a RAG engineer working on AmigosNestLearn.
 
 Responsibilities:
 

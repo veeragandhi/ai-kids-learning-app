@@ -65,7 +65,7 @@ export default function LearnPage() {
           </div>
 
           <h2 className="text-3xl font-bold text-gray-800">
-            Meet Milo!
+            Meet AmigosNest!
           </h2>
 
           <p className="text-gray-600 mt-2">
@@ -161,7 +161,7 @@ export default function LearnPage() {
             </div>
 
             <div className="text-xl font-bold">
-              Ask Milo
+              Ask AmigosNest
             </div>
           </Link>
         </div>
