@@ -1,4 +1,4 @@
-# AmigosNestLearn Conventions
+# AmigosNest Conventions
 
 ## Naming
 

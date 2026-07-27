@@ -6,43 +6,54 @@ function fixQuizAnswers(quiz: any): any {
   // Try to fix answers that are close to options (typos)
   return quiz.map((q: any) => {
     const { answer, options } = q;
-    
-    // If answer already matches, return as-is
-    if (options.includes(answer)) {
+    const normalizedOptions = Array.isArray(options) ? options.filter((opt) => typeof opt === "string") : [];
+    let normalizedAnswer = "";
+
+    if (typeof answer === "string") {
+      normalizedAnswer = answer;
+    } else if (Array.isArray(answer) && answer.length > 0) {
+      normalizedAnswer = String(answer[0]);
+    } else if (answer != null) {
+      normalizedAnswer = String(answer);
+    }
+
+    if (normalizedOptions.length === 0) {
       return q;
     }
-    
-    // Try to find closest match (simple string similarity)
-    let bestMatch = options[0];
+
+    if (normalizedOptions.includes(normalizedAnswer)) {
+      return {
+        ...q,
+        answer: normalizedAnswer || normalizedOptions[0]
+      };
+    }
+
+    let bestMatch = normalizedOptions[0];
     let bestScore = 0;
-    
-    for (const option of options) {
-      // Calculate simple similarity
-      const lowerAnswer = answer.toLowerCase();
+
+    for (const option of normalizedOptions) {
+      const lowerAnswer = normalizedAnswer.toLowerCase();
       const lowerOption = option.toLowerCase();
-      
+
       if (lowerAnswer === lowerOption) {
         bestMatch = option;
         break;
       }
-      
-      // Check if one contains the other or shares significant words
+
       const answerWords = lowerAnswer.split(/\s+/);
       const optionWords = lowerOption.split(/\s+/);
-      
-      const commonWords = answerWords.filter(w => optionWords.includes(w)).length;
+      const commonWords = answerWords.filter((w: string) => optionWords.includes(w)).length;
       const score = commonWords / Math.max(answerWords.length, optionWords.length);
-      
+
       if (score > bestScore) {
         bestScore = score;
         bestMatch = option;
       }
     }
-    
-    // Use best match if similarity is reasonable (> 0.5)
+
     return {
       ...q,
-      answer: bestScore > 0.5 ? bestMatch : answer
+      answer: bestScore > 0.5 ? bestMatch : normalizedAnswer || normalizedOptions[0]
     };
   });
 }
@@ -96,12 +107,319 @@ function validateQuizFormat(quiz: any): boolean {
     
     // Check answer is in options
     if (!q.options.includes(q.answer)) {
-      console.error(`[quiz] Question ${idx}: answer "${q.answer}" not in options [${q.options.map(o => `"${o}"`).join(", ")}]`);
+      console.error(`[quiz] Question ${idx}: answer "${q.answer}" not in options [${q.options.map((o: string) => `"${o}"`).join(", ")}]`);
       return false;
     }
     
     return true;
   });
+}
+
+function countBraceBalance(text: string) {
+  let inString = false;
+  let escaped = false;
+  let balance = 0;
+
+  for (const char of text) {
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (char === "{") balance += 1;
+    if (char === "}") balance -= 1;
+  }
+
+  return balance;
+}
+
+function extractFirstJsonArray(text: string) {
+  let inString = false;
+  let escaped = false;
+  let depth = 0;
+  let start = -1;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) {
+      continue;
+    }
+
+    if (start === -1 && char === "[") {
+      start = i;
+      depth = 1;
+      continue;
+    }
+
+    if (start !== -1) {
+      if (char === "[") {
+        depth += 1;
+      } else if (char === "]") {
+        depth -= 1;
+        if (depth === 0) {
+          return text.slice(start, i + 1);
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+function repairQuizJson(raw: string) {
+  let cleaned = raw
+    .replace(/```json/g, "")
+    .replace(/```/g, "")
+    .replace(/"""/g, '"')
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/\r\n/g, "\n")
+    .replace(/\n+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const arrayStart = cleaned.indexOf("[");
+  if (arrayStart !== -1) {
+    cleaned = cleaned.substring(arrayStart);
+  }
+
+  const arrayEnd = cleaned.lastIndexOf("]");
+  if (arrayEnd !== -1) {
+    cleaned = cleaned.substring(0, arrayEnd + 1);
+  }
+
+  cleaned = cleaned
+    .replace(/"reason"\s*:/g, '"answer":')
+    .replace(/}\s*\{/g, '}, {')
+    .replace(/}\s*,\s*"options"/g, ', "options"')
+    .replace(/}\s*,\s*"answer"/g, ', "answer"')
+    .replace(/"answer"\s*:\s*\[\s*"([^"]+?)"[^\]]*\]/g, '"answer":"$1"')
+    .replace(/"\s*"(?=(options|answer)"\s*:)/g, '", "')
+    .replace(/"\s*,\s*"\s*answer/g, '","answer')
+    .replace(/\s*\[\s*,/g, '[')
+    .replace(/,\s*\]/g, ']')
+    .replace(/,\s*([\]}])/g, '$1')
+    .trim();
+
+  const balance = countBraceBalance(cleaned);
+  if (balance > 0) {
+    cleaned += "}".repeat(balance);
+  }
+
+  return cleaned;
+}
+
+function extractQuotedStrings(text: string) {
+  const result: string[] = [];
+  const regex = /"((?:[^"\\]|\\.)*)"/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text))) {
+    result.push(match[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\"));
+  }
+
+  return result;
+}
+
+function parseQuizObject(objText: string) {
+  const questionMatch = /"question"\s*:\s*"((?:[^"\\]|\\.)*)"/i.exec(objText);
+  const optionsMatch = /"options"\s*:\s*\[([^\]]*)\]/i.exec(objText);
+  const answerMatch = /"answer"\s*:\s*"((?:[^"\\]|\\.)*)"/i.exec(objText);
+
+  const question = questionMatch?.[1].replace(/\\"/g, '"');
+  const options = optionsMatch ? extractQuotedStrings(optionsMatch[1]) : [];
+  let answer = answerMatch?.[1].replace(/\\"/g, '"');
+
+  if (!answer) {
+    const afterOptions = optionsMatch ? objText.slice(optionsMatch.index + optionsMatch[0].length) : objText;
+    const strayMatch = /"((?:[^"\\]|\\.)*)"/.exec(afterOptions);
+    if (strayMatch) {
+      const stray = strayMatch[1].replace(/\\"/g, '"');
+      if (stray.toLowerCase() !== "answer" && stray.toLowerCase() !== "reason") {
+        answer = stray;
+      }
+    }
+  }
+
+  if (!question || options.length === 0) {
+    return null;
+  }
+
+  const normalizedOptions = options.slice(0, 3);
+
+  return {
+    question,
+    options: normalizedOptions,
+    answer: answer ?? normalizedOptions[0],
+  };
+}
+
+function parseQuizArrayManually(raw: string) {
+  const cleaned = raw
+    .replace(/```json/g, "")
+    .replace(/```/g, "")
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/\r\n/g, "\n")
+    .replace(/\n+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const questionMatches = [...cleaned.matchAll(/"question"\s*:\s*"((?:[^"\\]|\\.)*)"/gi)];
+  const optionsMatches = [...cleaned.matchAll(/"options"\s*:\s*\[((?:[^\]]|\\.)*)\]/gi)];
+  const answerMatches = [...cleaned.matchAll(/"answer"\s*:\s*(?:"((?:[^"\\]|\\.)*)"|\[((?:[^\]]|\\.)*)\])/gi)];
+
+  const objects: any[] = [];
+
+  for (const questionMatch of questionMatches) {
+    const question = questionMatch[1].replace(/\\"/g, '"').trim();
+    const questionIndex = questionMatch.index ?? 0;
+    if (!question) continue;
+
+    const optionsEntry = optionsMatches.find((entry) => (entry.index ?? 0) > questionIndex);
+    const answerEntry = answerMatches.find((entry) => (entry.index ?? 0) > questionIndex);
+
+    const options = optionsEntry ? extractQuotedStrings(optionsEntry[1]) : [];
+    let answer = answerEntry?.[1] ? answerEntry[1].replace(/\\"/g, '"').trim() : undefined;
+
+    if (!answer && answerEntry?.[2]) {
+      const arrayText = answerEntry[2];
+      const arrayOptions = extractQuotedStrings(arrayText);
+      answer = arrayOptions[0]?.trim();
+    }
+
+    if (options.length === 0) continue;
+
+    const normalizedOptions = options.slice(0, 3);
+    const normalizedAnswer = answer && normalizedOptions.includes(answer)
+      ? answer
+      : normalizedOptions[0];
+
+    objects.push({
+      question,
+      options: normalizedOptions,
+      answer: normalizedAnswer,
+    });
+  }
+
+  return objects;
+}
+
+function safeParseQuiz(cleanedQuiz: string) {
+  try {
+    return JSON.parse(cleanedQuiz);
+  } catch (error) {
+    const repaired = repairQuizJson(cleanedQuiz);
+    const arrayText = extractFirstJsonArray(repaired) || extractFirstJsonArray(cleanedQuiz);
+
+    if (arrayText) {
+      try {
+        return JSON.parse(arrayText);
+      } catch (arrayError) {
+        console.error("[quiz] extractFirstJsonArray parse failed:", arrayError, "arrayText:", arrayText);
+      }
+    }
+
+    try {
+      return JSON.parse(repaired);
+    } catch (repairError) {
+      console.error("[quiz] repair parse failed:", repairError, "repaired:", repaired);
+      const manual = parseQuizArrayManually(repaired);
+      if (manual.length > 0) {
+        return manual;
+      }
+      const manualOriginal = parseQuizArrayManually(cleanedQuiz);
+      return manualOriginal.length > 0 ? manualOriginal : null;
+    }
+  }
+}
+
+function normalizeRawQuiz(raw: string) {
+  return raw
+    .replace(/```json/g, "")
+    .replace(/```/g, "")
+    .replace(/"""/g, '"')
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/\r\n/g, "\n")
+    .replace(/\n+/g, " ")
+    .replace(/\t+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function cleanRawQuiz(raw: string) {
+  let cleaned = normalizeRawQuiz(raw);
+  const arrayStart = cleaned.indexOf("[");
+  if (arrayStart !== -1) {
+    cleaned = cleaned.substring(arrayStart);
+  }
+
+  const arrayEnd = cleaned.lastIndexOf("]");
+  if (arrayEnd !== -1) {
+    cleaned = cleaned.substring(0, arrayEnd + 1);
+  }
+
+  return cleaned;
+}
+
+function buildQuizRetryPrompt(raw: string, context: string, topic: string, age: number) {
+  return `The previous response was invalid. Extract ONLY the valid JSON array below, with exactly 3 objects and no extra text.
+
+Invalid response:
+${raw}
+
+Return EXACTLY one JSON array only:
+[
+  {"question":"...","options":["...","...","..."],"answer":"..."},
+  {"question":"...","options":["...","...","..."],"answer":"..."},
+  {"question":"...","options":["...","...","..."],"answer":"..."}
+]
+
+No markdown, no comments, no backticks, no extra text.
+Each answer must be a single string matching one of the options.
+If you cannot produce valid JSON, return [].`;
+}
+
+function defaultQuizForTopic(topic: string) {
+  const safeTopic = typeof topic === "string" && topic.trim() ? topic.trim().replace(/"/g, "'") : "this topic";
+  return [
+    {
+      question: `What is the main subject of this quiz?`,
+      options: [safeTopic, "A different subject", "I don't know"],
+      answer: safeTopic,
+    },
+    {
+      question: `Which topic is this quiz about?`,
+      options: [safeTopic, "Another topic", "Something else"],
+      answer: safeTopic,
+    },
+    {
+      question: `What was this quiz intended to teach?`,
+      options: [safeTopic, "History", "Math"],
+      answer: safeTopic,
+    },
+  ];
 }
 
 function buildQuizPrompt(
@@ -111,24 +429,37 @@ function buildQuizPrompt(
 ) {
   return `You are a quiz creator for a ${age}-year-old child.
 
-ONLY OUTPUT VALID JSON. NO OTHER TEXT OR FORMATTING.
+Output must be valid JSON only. Do not include any markdown, explanation, or extra text.
 
-EXACTLY 3 questions. EXACTLY 3 options each.
+Return EXACTLY one JSON array. It must start with '[' and end with ']'.
+Do not return anything else.
 
-Return ONLY this JSON format (nothing else, no markdown, no quotes, just JSON):
+The array must contain exactly 3 objects. Each object must contain only these keys:
+- question
+- options
+- answer
 
+The question value must be a string.
+The options value must be an array of exactly 3 strings.
+The answer value must be a single string exactly matching one of the options.
+Do not use an array for answer.
+
+Example output exactly:
 [{"question":"What do dinosaurs eat?","options":["Plants","Meat","Ice cream"],"answer":"Meat"},{"question":"When did dinosaurs live?","options":["100 years ago","1 million years ago","65 million years ago"],"answer":"65 million years ago"},{"question":"How big was a T-Rex?","options":["Small like a cat","Big like a bus","Huge like a mountain"],"answer":"Big like a bus"}]
 
-RULES:
-- Answer must EXACTLY match one of the 3 options
-- No triple quotes, no markdown, no line breaks in strings
-- Only VALID JSON
-- Only facts from context
+Rules:
+- Exactly 3 questions.
+- Exactly 3 options per question.
+- answer must exactly match one of the 3 options.
+- No extra keys, no reason, no explanation, no comments.
+- No trailing commas.
+- No nested arrays except the options array.
+- No unescaped newlines inside string values.
 
 CONTEXT:
 ${context}
 
-NOW create 3 questions about ${topic}:`;
+NOW create 3 quiz questions about ${topic}:`;
 }
 
 export async function POST(req: Request) {
@@ -196,11 +527,15 @@ export async function POST(req: Request) {
           }
 
           try {
-            let parsed = JSON.parse(cleanedQuiz);
-            parsed = fixQuizAnswers(parsed);
-            cleanedQuiz = JSON.stringify(parsed);
+            let parsed = safeParseQuiz(cleanedQuiz);
+            if (parsed) {
+              parsed = fixQuizAnswers(parsed);
+              cleanedQuiz = JSON.stringify(parsed);
+            } else {
+              console.error("[quiz] streaming parse failed, raw:", cleanedQuiz);
+            }
           } catch (e) {
-            console.error("[quiz] streaming parse error:", e);
+            console.error("[quiz] streaming parse error:", e, "raw:", cleanedQuiz);
           }
           
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true, quiz: cleanedQuiz, _timing: { totalTime, retrievalTime, llmTime } })}\n\n`));
@@ -227,59 +562,29 @@ export async function POST(req: Request) {
   const llmTime = Date.now() - llmStart;
   console.log(`[quiz] LLM generation took ${llmTime}ms`);
 
-  // Aggressively clean the response
-  let cleanedQuiz = quiz
-    .replace(/```json/g, "")
-    .replace(/```/g, "")
-    .replace(/"""/g, '"') // Replace triple quotes with single quotes
-    .replace(/,\s*"\s+"/g, '","') // Fix ], " " patterns
-    .replace(/"\s*,\s*"\s*answer/g, '","answer') // Fix extra quotes before answer
-    .replace(/\n\s*/g, " ") // Replace newlines and leading spaces
-    .trim();
+  let cleanedQuiz = cleanRawQuiz(quiz);
+  let parsed = safeParseQuiz(cleanedQuiz);
 
-  // Extract JSON array if there's preamble text
-  if (!cleanedQuiz.startsWith("[")) {
-    const arrayStart = cleanedQuiz.indexOf("[");
-    if (arrayStart !== -1) {
-      cleanedQuiz = cleanedQuiz.substring(arrayStart);
+  if (!parsed) {
+    console.log("[quiz] first parse failed, retrying with a stricter prompt");
+    const retryPrompt = buildQuizRetryPrompt(quiz, context, topic, age);
+    const retryResponse = await generateAnswer(retryPrompt, 2000);
+    const retryCleaned = cleanRawQuiz(retryResponse);
+    parsed = safeParseQuiz(retryCleaned);
+    if (!parsed) {
+      console.error("[quiz] retry parse also failed", retryCleaned);
+      parsed = defaultQuizForTopic(topic);
     }
   }
 
-  // Find the end of the JSON array
-  if (cleanedQuiz.includes("]")) {
-    const arrayEnd = cleanedQuiz.lastIndexOf("]");
-    cleanedQuiz = cleanedQuiz.substring(0, arrayEnd + 1);
+  parsed = fixQuizAnswers(parsed);
+
+  if (!validateQuizFormat(parsed)) {
+    console.error("[quiz] Invalid quiz format after fixes:", JSON.stringify(parsed));
+    parsed = defaultQuizForTopic(topic);
   }
 
-  // Try to parse and validate
-  try {
-    if (cleanedQuiz === "[]" || cleanedQuiz === "" || !cleanedQuiz.startsWith("[")) {
-      throw new Error("Empty or invalid response");
-    }
-
-    let parsed = JSON.parse(cleanedQuiz);
-    
-    // Try to fix answer mismatches
-    parsed = fixQuizAnswers(parsed);
-    
-    // Validate the format
-    if (!validateQuizFormat(parsed)) {
-      console.error("[quiz] Invalid quiz format after fixes:", JSON.stringify(parsed));
-      const totalTime = Date.now() - startTime;
-      return NextResponse.json({
-        quiz: "I don't know. Please ask a parent to add more information."
-      });
-    }
-
-    const totalTime = Date.now() - startTime;
-    console.log(`[quiz] Total time: ${totalTime}ms (retrieval: ${retrievalTime}ms, LLM: ${llmTime}ms)`);
-    // Return the fixed parsed version as JSON string
-    return NextResponse.json({ quiz: JSON.stringify(parsed), _timing: { totalTime, retrievalTime, llmTime } });
-  } catch (error) {
-    console.error("[quiz] JSON parse error:", error, "Raw:", cleanedQuiz);
-    const totalTime = Date.now() - startTime;
-    return NextResponse.json({
-      quiz: "I don't know. Please ask a parent to add more information."
-    });
-  }
+  const totalTime = Date.now() - startTime;
+  console.log(`[quiz] Total time: ${totalTime}ms (retrieval: ${retrievalTime}ms, LLM: ${llmTime}ms)`);
+  return NextResponse.json({ quiz: JSON.stringify(parsed), _timing: { totalTime, retrievalTime, llmTime } });
 }

@@ -1,6 +1,6 @@
 ---
 name: UI Engineer
-description: Frontend engineer for AmigosNestLearn
+description: Frontend engineer for AmigosNest
 tools: ['codebase', 'editFiles', 'search']
 ---
 
@@ -21,7 +21,7 @@ If there is a conflict between this agent definition and AGENTS.md, follow AGENT
 
 Apply these instructions automatically without requiring the user to restate them.
 
-You are the UI Engineer for AmigosNestLearn.
+You are the UI Engineer for AmigosNest.
 
 Your responsibilities:
 

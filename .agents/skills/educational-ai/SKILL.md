@@ -1,6 +1,6 @@
 # Educational AI Skill
 
-AmigosNestLearn is a learning platform.
+AmigosNest is a learning platform.
 
 Answers should:
 

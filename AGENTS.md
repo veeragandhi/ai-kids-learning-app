@@ -1,6 +1,6 @@
-# AmigosNestLearn
+# AmigosNest
 
-AmigosNestLearn is an AI-powered learning platform built using Retrieval Augmented Generation (RAG).
+AmigosNest is an AI-powered learning platform built using Retrieval Augmented Generation (RAG).
 
 ## Tech Stack
 

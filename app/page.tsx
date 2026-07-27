@@ -35,7 +35,7 @@ export default function LearnPage() {
         </div>
 
         <Link
-          href="/parent"
+          href="/upload"
           className="bg-white shadow px-4 py-2 rounded-full hover:shadow-md"
         >
           👩 Parent Dashboard
