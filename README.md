@@ -1,132 +1,203 @@
 # AmigosNest 🚀
 
-AmigosNest is an AI-powered learning companion for families. Parents can upload textbooks, worksheets, PDFs and other learning materials. AmigosNest generates personalized lessons, quizzes and explanation tailored to each child's learning level.
+> An AI learning companion that grows with every child.
 
-The application uses RAG to understand uploaded content and provide contextual, age-appropriate learning experiences.
+AmigosNest is an AI-powered learning companion for families that transforms educational content into personalized learning experiences.
 
-## Problem
+Parents can upload textbooks, worksheets, PDFs, storybooks, and other learning materials. AmigosNest understands the content and generates personalized lessons, quizzes, stories, and interactive explanations tailored to each child's learning level, interests, and pace.
 
-Traditional learning platforms often provide static content and one-size-fits-all experiences.
+Rather than simply answering questions, AmigosNest is designed to encourage exploration, reasoning, and creativity through personalized learning experiences built from the educational materials children already use.
 
-Children learn differently:
+---
 
-* Different learning speeds
-* Different interests
-* Different styles of understanding
+# Why AmigosNest?
 
-MiloLearn aims to create adaptive learning experiences that respond to each child's needs.
+Every child learns differently.
 
-## Features
+Traditional educational platforms deliver the same content to every learner regardless of:
 
-* AI-powered educational assistance
-* Interactive question-answer experience
-* Personalized learning flow
-* Child-friendly interface
-* Retrieval-Augmented Generation (RAG)
-* Semantic search with embeddings
-* Context-aware AI responses
+- Learning pace
+- Interests
+- Learning style
+- Existing knowledge
 
-## Tech Stack
+Parents already own valuable educational resources, but those resources are static.
 
-### Frontend
+AmigosNest transforms those materials into interactive learning experiences that adapt to each child.
 
-* Next.js
-* React
-* TypeScript
-* Tailwind CSS
+---
 
-### AI Stack
+# Learning Philosophy
 
-* Ollama
-* Mistral
-* Nomic Embed Text
-* RAG pipeline
+AmigosNest is built around four principles.
 
-### Development
+## 🎯 Personalization
 
-* Git
-* GitHub
+Every child learns differently.
 
-## How It Works
+Lessons adapt to the child's learning level, interests and progress instead of presenting identical content to everyone.
 
-1. Educational content is processed and indexed
-2. Content is converted into vector embeddings
-3. User questions are transformed into embeddings
-4. Similar content is retrieved
-5. Relevant context is sent to the AI model
-6. AI generates personalized responses
+---
 
-## Installation
+## 🔍 Exploration
 
-Clone the repository:
+Learning should create curiosity, not just provide answers.
+
+Instead of stopping after answering a question, AmigosNest encourages children to continue exploring related ideas through stories, explanations and interactive experiences.
+
+---
+
+## 🧠 Reasoning
+
+Children learn best by thinking, explaining and discovering.
+
+AmigosNest generates quizzes and guided questions that encourage children to reason through concepts instead of simply memorizing answers.
+
+---
+
+## 🎨 Creativity
+
+Learning becomes memorable when children create.
+
+Stories, imaginative examples and personalized learning experiences make concepts engaging and enjoyable.
+
+---
+
+# Features
+
+- 📚 Upload textbooks, worksheets, PDFs and storybooks
+- 🧠 AI-generated personalized lessons
+- ❓ Adaptive quiz generation
+- 📖 Story-based explanations
+- 💬 Interactive question answering
+- 🔍 Retrieval-Augmented Generation (RAG)
+- 🤖 Local AI support with Ollama
+- 📂 Parent document library
+- 👨‍👩‍👧 Child-friendly learning interface
+
+---
+
+# Tech Stack
+
+## Frontend
+
+- Next.js
+- React
+- TypeScript
+- Tailwind CSS
+
+## AI
+
+- Ollama
+- Retrieval-Augmented Generation (RAG)
+- Mistral
+- Nomic Embed Text
+
+## Development
+
+- Git
+- GitHub
+
+---
+
+# How It Works
+
+1. Parents upload educational materials.
+2. Documents are converted into semantic vector embeddings.
+3. AmigosNest retrieves the most relevant information using RAG.
+4. AI generates personalized lessons, stories, quizzes and explanations.
+5. Children learn through engaging and age-appropriate educational experiences.
+
+---
+
+# Installation
+
+Clone the repository
 
 ```bash
-git clone https://github.com/veeragandhi/MiloLearn.git
+git clone https://github.com/veeragandhi/ai-kids-learning-app.git
 ```
 
-Install dependencies:
+Install dependencies
 
 ```bash
 npm install
 ```
 
-Start Ollama:
+Start Ollama
 
 ```bash
 ollama serve
 ```
 
-Pull required models:
+Download the required models
 
 ```bash
 ollama pull mistral
 ollama pull nomic-embed-text
 ```
 
-Run the application:
+Run the application
 
 ```bash
 npm run dev
 ```
 
-Open:
+Open
 
-```text
+```
 http://localhost:3000
 ```
 
-## Future Roadmap
+---
 
-* Voice interactions
-* Gamification and rewards
-* Parent dashboard
-* Progress tracking
-* Personalized learning paths
-* Multiple languages
-* Quiz generation
+# Roadmap
 
-## Screenshots
+- 👤 Personalized child learning profiles
+- 🎥 AI-generated educational videos
+- 🎙️ Voice-based learning
+- 📈 Parent progress dashboard
+- 🧠 Long-term learning memory
+- 🛤️ Personalized learning journeys
+- 🏆 Gamification and rewards
+- 🌍 Multi-language support
+- ☁️ Cloud and local AI deployment
 
-Add screenshots and demo GIFs here.
+---
 
-## Security
+# Vision
 
-Do not commit:
+Today's AI tutors answer questions.
 
-* .env
-* API keys
-* Secrets
-* Credentials
+We believe the future is an AI learning companion that grows with every child.
 
-## Vision
+AmigosNest aims to understand how each child learns, personalize educational experiences using the family's own learning materials, encourage exploration through guided discovery, develop reasoning through thoughtful questioning, and inspire creativity through stories and interactive learning.
 
-Build an AI-native learning platform that helps children learn in a personalized and engaging way.
+Our long-term goal is to make personalized learning accessible to every family.
 
-## Author
+---
 
-Veera Gandhi
+# Open Source
 
-## Application Screenshots
+Contributions, ideas and feedback are always welcome.
 
+Feel free to open an issue or submit a pull request.
 
+---
 
+# Security
+
+Please do not commit:
+
+- `.env`
+- API keys
+- Secrets
+- Credentials
+
+---
+
+# Author
+
+**Veera Gandhi**
+
+GitHub: https://github.com/veeragandhi
