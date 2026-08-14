@@ -8,6 +8,13 @@ import { chunkText } from "@/lib/chunk";
 import { createEmbedding } from "@/lib/embeddings";
 import { v4 as uuid } from "uuid";
 
+// P-1: hard cap on upload size to avoid buffering huge files into memory
+const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20MB
+
+// P-1: minimum characters required for an extraction to be considered real
+// text (not an empty/garbled result from a scanned or image-only PDF).
+const MIN_EXTRACTED_TEXT_LENGTH = 20;
+
 export async function POST(req: Request) {
   try {
     const formData = await req.formData();
@@ -24,6 +31,18 @@ export async function POST(req: Request) {
 
     if (!fs.existsSync(uploadDir)) {
       fs.mkdirSync(uploadDir);
+    }
+
+    // P-1: reject oversized files BEFORE reading them into memory
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      return NextResponse.json(
+        {
+          error: `File is too large (${(file.size / (1024 * 1024)).toFixed(
+            1
+          )}MB). Max allowed is ${MAX_FILE_SIZE_BYTES / (1024 * 1024)}MB.`,
+        },
+        { status: 413 }
+      );
     }
 
     const bytes = await file.arrayBuffer();
@@ -50,6 +69,21 @@ export async function POST(req: Request) {
         error: "Only .txt and .pdf supported"
       },
       { status: 400 }
+    );
+  }
+
+  // P-1: guard against scanned/image-only PDFs (or corrupt/empty text files).
+  // pdf2json only reads the text layer, so a scanned page silently returns "".
+  // Never report success: true in that case — surface it to the parent instead.
+  if (!extractedText || extractedText.trim().length < MIN_EXTRACTED_TEXT_LENGTH) {
+    return NextResponse.json(
+      {
+        error:
+          extension === ".pdf"
+            ? "We couldn't find readable text in this PDF. It may be a scanned or image-only document — OCR support isn't available yet. Please try a text-based PDF or a .txt file."
+            : "This file appears to be empty. Please upload a document that contains text.",
+      },
+      { status: 422 }
     );
   }
 
