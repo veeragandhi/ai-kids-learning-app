@@ -1,0 +1,156 @@
+[
+  {
+    "id": "correct-answer",
+    "description": "Correct answer supported by the plants document",
+    "mode": "answer",
+    "payload": { "question": "What do plants need to grow?", "age": 9, "guidingQuestion": "What clues in the text tell you what plants need?", "studentAnswer": "Plants need water, sunlight, and air." },
+    "expect": { "correctness": "correct", "evidence": ["water", "sunlight", "air"], "nextPrompt": "How did you know?" }
+  },
+  {
+    "id": "incorrect-answer",
+    "description": "Incorrect answer should be corrected kindly without inventing facts",
+    "mode": "answer",
+    "payload": { "question": "What do plants need to grow?", "age": 9, "guidingQuestion": "What clues in the text tell you what plants need?", "studentAnswer": "Plants need rocks and fire." },
+    "expect": { "correctness": "incorrect", "evidence": ["water", "sunlight", "air"], "nextPrompt": "How did you know?", "feedbackMustNotInclude": ["rocks", "fire"] }
+  },
+  {
+    "id": "partially-correct-answer",
+    "description": "Partially correct answer is recognized and invites evidence",
+    "mode": "answer",
+    "payload": { "question": "What do plants need to grow?", "age": 9, "guidingQuestion": "What clues in the text tell you what plants need?", "studentAnswer": "Plants need water." },
+    "expect": { "correctness": "partial", "evidence": ["water"], "nextPrompt": "How did you know?" }
+  },
+  {
+    "id": "dont-know",
+    "description": "Uncertainty receives kind, actionable support",
+    "mode": "answer",
+    "payload": { "question": "What do animals need?", "age": 7, "guidingQuestion": "What do the animals in the text need?", "studentAnswer": "I don't know." },
+    "expect": { "correctness": "partial", "evidence": ["food", "water", "shelter"], "nextPrompt": "How did you know?", "feedbackMustNotInclude": ["animals need food, water, and shelter"] }
+  },
+  {
+    "id": "dont-understand",
+    "description": "Confusion receives a simpler next step",
+    "mode": "answer",
+    "payload": { "question": "Why did Stegosaurus live before T. rex?", "age": 9, "guidingQuestion": "Which dates can you compare?", "studentAnswer": "I don't understand." },
+    "expect": { "correctness": "partial", "evidence": ["stegosaurus", "rex"], "nextPrompt": "How did you know?" }
+  },
+  {
+    "id": "direct-answer-request",
+    "description": "A direct request in question mode keeps the child thinking",
+    "mode": "question",
+    "payload": { "question": "Just tell me: what do plants need to grow?", "age": 7, "questionType": "guided" },
+    "expect": { "questionType": "guided", "mustNotLeakEvidence": ["water", "sunlight", "air"], "noDirectAnswer": true }
+  },
+  {
+    "id": "irrelevant-answer",
+    "description": "An answer from another topic is not accepted as evidence",
+    "mode": "answer",
+    "payload": { "question": "What do plants need to grow?", "age": 9, "guidingQuestion": "What clues in the text tell you what plants need?", "studentAnswer": "Fish live in water." },
+    "expect": { "correctness": "incorrect", "evidence": ["water", "sunlight", "air"], "nextPrompt": "How did you know?" }
+  },
+  {
+    "id": "repeated-answer",
+    "description": "Repeated wording does not inflate correctness or derail feedback",
+    "mode": "answer",
+    "payload": { "question": "What do animals need?", "age": 9, "guidingQuestion": "What needs do the animals share?", "studentAnswer": "Food and water. Food and water." },
+    "expect": { "correctness": "partial", "evidence": ["food", "water"], "nextPrompt": "How did you know?" }
+  },
+  {
+    "id": "very-short-answer",
+    "description": "A one-word answer is evaluated with a useful invitation to add evidence",
+    "mode": "answer",
+    "payload": { "question": "Where do fish live?", "age": 7, "guidingQuestion": "Which sentence tells you where fish live?", "studentAnswer": "Water." },
+    "expect": { "correctness": "correct", "evidence": ["fish", "water"], "nextPrompt": "How did you know?" }
+  },
+  {
+    "id": "detailed-answer",
+    "description": "A detailed, grounded answer is not penalized for extra relevant detail",
+    "mode": "answer",
+    "payload": { "question": "What can an elephant use its trunk for?", "age": 12, "guidingQuestion": "What jobs does the text list for an elephant's trunk?", "studentAnswer": "An African elephant uses its trunk for breathing, smelling, drinking, and grasping objects. The trunk helps it do several different jobs." },
+    "expect": { "correctness": "correct", "evidence": ["breathing", "smelling", "drinking", "grasping"], "nextPrompt": "How did you know?" }
+  },
+  {
+    "id": "present-in-context",
+    "description": "A clearly stated fact can produce a grounded guiding question",
+    "mode": "question",
+    "payload": { "question": "What do fish need to live in?", "age": 9, "questionType": "guided" },
+    "expect": { "questionType": "guided", "evidence": ["fish", "water"], "noDirectAnswer": true }
+  },
+  {
+    "id": "answer-not-present",
+    "description": "A fact absent from the uploaded material is not fabricated",
+    "mode": "question",
+    "payload": { "question": "What color are fish?", "age": 9, "questionType": "guided" },
+    "expect": { "noContextOrUncertainty": true, "mustNotLeakEvidence": ["blue", "red", "green"] }
+  },
+  {
+    "id": "irrelevant-context",
+    "description": "A query with likely unrelated retrieved material does not produce an unsupported fact",
+    "mode": "question",
+    "payload": { "question": "What is the favorite food of an elephant?", "age": 9, "questionType": "guided" },
+    "expect": { "noContextOrUncertainty": true, "noDirectAnswer": true }
+  },
+  {
+    "id": "multiple-relevant-chunks",
+    "description": "A comparison requiring multiple dinosaur facts stays grounded",
+    "mode": "question",
+    "payload": { "question": "How are T. rex and Triceratops alike and different?", "age": 12, "questionType": "guided" },
+    "expect": { "questionType": "guided", "evidence": ["rex", "triceratops"], "noDirectAnswer": true }
+  },
+  {
+    "id": "age-seven-guidance",
+    "description": "Age seven receives short, concrete guidance",
+    "mode": "question",
+    "payload": { "question": "What do animals need?", "age": 7, "questionType": "guided" },
+    "expect": { "questionType": "guided", "evidence": ["food", "water", "shelter"], "ageMaxWords": 22, "noDirectAnswer": true }
+  },
+  {
+    "id": "age-nine-evaluation",
+    "description": "Age nine receives kind evidence-focused evaluation",
+    "mode": "answer",
+    "payload": { "question": "What do plants need to grow?", "age": 9, "guidingQuestion": "What clues tell you what plants need?", "studentAnswer": "They need water and sunlight because the text says so." },
+    "expect": { "correctness": "partial", "evidence": ["water", "sunlight"], "nextPrompt": "How did you know?", "ageMaxWords": 70 }
+  },
+  {
+    "id": "age-twelve-explanation",
+    "description": "Age twelve can receive a more developed evidence rubric",
+    "mode": "explanation",
+    "payload": { "question": "When did T. rex live?", "age": 12, "guidingQuestion": "Which time range does the text give?", "studentAnswer": "T. rex lived in the Late Cretaceous.", "explanation": "I used the sentence that says it lived approximately 68 to 66 million years ago." },
+    "expect": { "evidence": ["cretaceous", "68", "66"], "scoreAtLeast": 50, "ageMaxWords": 90 }
+  },
+  {
+    "id": "creative-example",
+    "description": "Creative mode invites an example without leaving the document",
+    "mode": "question",
+    "payload": { "question": "How do animals meet their needs?", "age": 9, "questionType": "creative" },
+    "expect": { "questionType": "creative", "evidence": ["food", "water", "shelter"], "noDirectAnswer": true }
+  },
+  {
+    "id": "grounded-explanation",
+    "description": "Explanation scoring rewards a cited clue rather than a bare assertion",
+    "mode": "explanation",
+    "payload": { "question": "Where do fish live?", "age": 9, "guidingQuestion": "Which sentence gives the habitat?", "studentAnswer": "Fish live in water.", "explanation": "I know because the text says fish live in water." },
+    "expect": { "evidence": ["fish", "water"], "scoreAtLeast": 50 }
+  },
+  {
+    "id": "unsupported-explanation",
+    "description": "An explanation with unsupported claims is not treated as strong evidence",
+    "mode": "explanation",
+    "payload": { "question": "What do plants need to grow?", "age": 12, "guidingQuestion": "Which clues support your answer?", "studentAnswer": "Plants need water.", "explanation": "I know because plants are always happy in blue gardens and blue is their favorite color." },
+    "expect": { "evidence": ["water"], "scoreAtMost": 70, "feedbackMustNotInclude": ["blue is their favorite color"] }
+  },
+  {
+    "id": "guiding-question-quality",
+    "description": "Guiding question is useful, open-ended, and not a restatement",
+    "mode": "question",
+    "payload": { "question": "Why does Stegosaurus have plates?", "age": 12, "questionType": "guided" },
+    "expect": { "questionType": "guided", "evidence": ["stegosaurus", "plates"], "noDirectAnswer": true, "notYesNo": true, "notRepeatQuestion": true }
+  },
+  {
+    "id": "explanation-i-dont-know",
+    "description": "An uncertain explanation receives a low-pressure next prompt",
+    "mode": "explanation",
+    "payload": { "question": "What do animals need?", "age": 7, "guidingQuestion": "What needs do you notice?", "studentAnswer": "I think food.", "explanation": "I don't know how I know." },
+    "expect": { "evidence": ["food"], "scoreAtMost": 70, "ageMaxWords": 70 }
+  }
+]

@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "evaluate:ask": "node .agents/skills/ask/scripts/evaluate-ask.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.16.0",

@@ -27,6 +27,22 @@ function cosineSimilarity(
   );
 }
 
+function hasQueryAnchors(query: string, context: string) {
+  const ignored = new Set([
+    "a", "an", "and", "are", "as", "at", "can", "could", "did", "do", "does", "for", "how",
+    "in", "is", "it", "of", "on", "or", "the", "to", "was", "were", "what", "when", "where",
+    "which", "who", "why", "with", "alike", "different", "need", "needs", "use", "uses",
+  ]);
+  const queryWords = (query.toLowerCase().match(/[a-z]+/g) || [])
+    .filter((word) => !ignored.has(word))
+    .map((word) => word.replace(/(ing|ed|s)$/, ""));
+  const contextWords = new Set(
+    (context.toLowerCase().match(/[a-z]+/g) || []).map((word) => word.replace(/(ing|ed|s)$/, ""))
+  );
+
+  return queryWords.length > 0 && queryWords.every((word) => contextWords.has(word));
+}
+
 export async function 
 getRelevantContext(
   query: string,
@@ -63,16 +79,18 @@ getRelevantContext(
       .filter((x) => x.score >= minSimilarity)
       .slice(0, topK);
 
+    const context = filtered
+      .map((x) => x.text)
+      .join("\n");
+
     console.log("[retrieval] query:", query, "found:", filtered.length, "chunks with score >= " + minSimilarity);
     
-    if (filtered.length === 0) {
+    if (filtered.length === 0 || !hasQueryAnchors(query, context)) {
       console.log("[retrieval] no relevant documents found");
       return "";
     }
 
-    const result = filtered
-      .map((x) => x.text)
-      .join("\n");
+    const result = context;
     
     console.log("[retrieval] retrieved context, length:", result.length);
     return result;

@@ -22,13 +22,15 @@ export default function ParentPage() {
     useState(false);
 
   const loadDocuments = async () => {
+    try {
+      const res = await fetch("/api/documents");
+      if (!res.ok) throw new Error("Unable to load documents");
 
-    const res =
-      await fetch("/api/documents");
-
-    const data = await res.json();
-
-    setDocuments(data);
+      const data = await res.json();
+      setDocuments(data);
+    } catch {
+      setMessage("The learning library is unavailable. Please make sure the app is running and try again.");
+    }
   };
 
   useEffect(() => {
@@ -36,7 +38,6 @@ export default function ParentPage() {
   }, []);
 
   const uploadFile = async () => {
-
     if (!file) return;
 
     setLoading(true);
@@ -46,23 +47,30 @@ export default function ParentPage() {
 
     formData.append("file", file);
 
-    const res = await fetch(
-      "/api/upload",
-      {
+    try {
+      const res = await fetch("/api/upload", {
         method: "POST",
         body: formData,
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Upload failed");
       }
-    );
 
-    const data = await res.json();
-
-    setMessage(
-      data.message || data.error
-    );
-
-    setLoading(false);
-
-    loadDocuments();
+      setMessage(data.message || "Document uploaded successfully");
+      await loadDocuments();
+    } catch (error) {
+      setMessage(
+        error instanceof TypeError
+          ? "Could not connect to the app. Please start the development server and try again."
+          : error instanceof Error
+            ? error.message
+            : "Upload failed. Please try again."
+      );
+    } finally {
+      setLoading(false);
+    }
   };
 
   const toggleApproval =

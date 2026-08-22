@@ -80,6 +80,40 @@ function normalizeResponseType(mode: string, parsedType?: string) {
   return "guidingQuestion";
 }
 
+function isUncertainAnswer(text: string) {
+  return /\b(i\s+(don't|do not)\s+know|i\s+don't\s+understand|i\s+do not\s+understand|not sure|just tell me)\b/i.test(text);
+}
+
+function isDirectAnswerRequest(text: string) {
+  return /\b(just tell me|tell me the answer|give me the answer|what is the answer)\b/i.test(text);
+}
+
+function normalizeCorrectness(value: unknown) {
+  const normalized = String(value || "").trim().toLowerCase();
+
+  if (normalized.includes("partial")) return "partial";
+  if (normalized === "correct") return "correct";
+  if (normalized === "incorrect") return "incorrect";
+  return null;
+}
+
+function normalizeQuestionType(value: unknown, fallback: "guided" | "creative") {
+  return value === "creative" ? "creative" : fallback;
+}
+
+function hasContextSupport(answer: string, context: string) {
+  const stopWords = new Set([
+    "a", "an", "and", "are", "as", "at", "be", "because", "can", "do", "for", "from", "i",
+    "in", "is", "it", "of", "on", "or", "that", "the", "their", "this", "to", "was", "were",
+    "what", "where", "which", "with", "you",
+  ]);
+  const answerWords = new Set(
+    (answer.toLowerCase().match(/[a-z]+/g) || []).filter((word) => !stopWords.has(word))
+  );
+  const contextWords = new Set(context.toLowerCase().match(/[a-z]+/g) || []);
+  return [...answerWords].some((word) => contextWords.has(word));
+}
+
 function looksLikeEnglishText(text: string) {
   if (!text) return false;
   const asciiOnly = /^[\p{ASCII}\s.,!?"'()\-]+$/u.test(text);
@@ -221,6 +255,10 @@ Use ONLY the context below.
 Respond in simple, clear English only.
 Decide if the student's answer is correct, partially correct, or incorrect based on the context.
 Always provide one short, kind piece of feedback.
+If the student says they do not know or do not understand, correctness MUST be "partial" and feedback must ask for one small clue without stating the answer.
+Do not mark an answer correct because it shares one word with the context. It must answer the original question and be supported by the context.
+If the student's answer is unrelated to the original question, correctness MUST be "incorrect".
+For a correct answer, mention at least one supporting detail from the context in feedback. For a partial answer, name what is right and ask for the missing detail without giving it away.
 Then ask the next prompt exactly as: How did you know?
 
 CONTEXT:
@@ -258,6 +296,7 @@ Use ONLY the context below.
 Respond in simple, clear English only.
 Score the explanation on a 0-100 rubric based on evidence from the context, clarity of reasoning, and whether the explanation answers how the child arrived at the answer.
 Do NOT guess the actual answer if the explanation is unclear.
+Use a low score for an explanation that is uncertain or unsupported. Keep feedback short, kind, and tied to a specific clue from the context when one exists.
 
 CONTEXT:
 ${context}
@@ -321,6 +360,18 @@ export async function POST(req: Request) {
       },
       { status: 200 }
     );
+  }
+
+  if (mode === "question" && isDirectAnswerRequest(question)) {
+    const totalTime = Date.now() - startTime;
+    return NextResponse.json({
+      type: "guidingQuestion",
+      question: "What clue in the text could help you figure this out?",
+      hintLevel: 1,
+      questionType,
+      source: "Document",
+      _timing: { totalTime, retrievalTime },
+    });
   }
 
   let prompt: string;
@@ -392,11 +443,24 @@ export async function POST(req: Request) {
     : buildDefaultGuidingQuestion(question);
 
   if (mode === "answer") {
+    const parsedCorrectness = normalizeCorrectness(parsed.correctness);
+    const unsupported = !hasContextSupport(studentAnswer, context);
+    const correctness = isUncertainAnswer(studentAnswer)
+      ? "partial"
+      : unsupported
+        ? "incorrect"
+        : parsedCorrectness || fallback.correctness;
+    const feedback = isUncertainAnswer(studentAnswer)
+      ? fallback.feedback
+      : unsupported
+        ? "That idea is not supported by the text. Find one clue in the document that answers the question."
+      : feedbackText || fallback.feedback;
+
     return NextResponse.json({
       type: normalizeResponseType(mode, parsed.type),
-      correctness: parsed.correctness,
-      feedback: feedbackText || fallback.feedback,
-      nextPrompt: parsed.nextPrompt || fallback.nextPrompt,
+      correctness,
+      feedback,
+      nextPrompt: "How did you know?",
       hintLevel: parsed.hintLevel || fallback.hintLevel,
       source: "Document",
       _timing: timing
@@ -404,9 +468,14 @@ export async function POST(req: Request) {
   }
 
   if (mode === "explanation") {
+    const parsedScore = Number(parsed.score);
+    const score = Number.isFinite(parsedScore) && parsedScore >= 0 && parsedScore <= 100
+      ? parsedScore
+      : fallback.score;
+
     return NextResponse.json({
       type: normalizeResponseType(mode, parsed.type),
-      score: Number(parsed.score) || fallback.score,
+      score,
       feedback: feedbackText || fallback.feedback,
       finalPrompt: finalPromptText || fallback.finalPrompt,
       source: "Document",
@@ -418,7 +487,7 @@ export async function POST(req: Request) {
     type: normalizeResponseType(mode, parsed.type),
     question: safeQuestion || fallback.question,
     hintLevel: parsed.hintLevel || fallback.hintLevel,
-    questionType: parsed.questionType || fallback.questionType,
+    questionType: normalizeQuestionType(parsed.questionType, questionType),
     source: "Document",
     _timing: timing
   });

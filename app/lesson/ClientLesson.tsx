@@ -87,6 +87,11 @@ export default function ClientLesson() {
     return () => clearInterval(interval);
   }, [loading]);
 
+  useEffect(() => () => {
+    if (progressRef.current) clearInterval(progressRef.current);
+    speechSynthesis.cancel();
+  }, []);
+
   const handleReadAloud = () => {
     if (!lesson) return;
 
@@ -156,10 +161,12 @@ export default function ClientLesson() {
     }
   };
 
-  const startVideoPlayFn = (script: VideoScript, startIndex: number) => {
+  const startVideoPlayFn = (script: VideoScript, startIndex: number, resetElapsed = true) => {
     setIsPlaying(true);
-    elapsedRef.current = 0;
-    setProgress(0);
+    if (resetElapsed) {
+      elapsedRef.current = 0;
+      setProgress(0);
+    }
     if (progressRef.current) clearInterval(progressRef.current);
     let idx = startIndex;
     progressRef.current = setInterval(() => {
@@ -187,7 +194,7 @@ export default function ClientLesson() {
       clearInterval(progressRef.current!);
       setIsPlaying(false);
     } else {
-      startVideoPlayFn(videoScript, currentSlide);
+      startVideoPlayFn(videoScript, currentSlide, false);
     }
   };
 
