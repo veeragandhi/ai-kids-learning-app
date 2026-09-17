@@ -24,6 +24,8 @@ export default function QuizPage() {
   const router = useRouter();
 
   const [topic, setTopic] = useState("");
+  const [age, setAge] = useState(5);
+  const [numQuestions, setNumQuestions] = useState(3);
   const [quiz, setQuiz] = useState<Question[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -74,7 +76,7 @@ export default function QuizPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ topic }),
+        body: JSON.stringify({ topic, age, numQuestions }),
       });
 
       const data = await res.json();
@@ -209,6 +211,56 @@ export default function QuizPage() {
 
               {/* Input Card */}
               <div className="rounded-3xl bg-white p-4 shadow-lg">
+                <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-end md:gap-3">
+                  <div className="flex-1">
+                    <label className="block text-sm font-semibold text-slate-700 mb-2">
+                      Your Age
+                    </label>
+                    <input
+                      type="number"
+                      min="3"
+                      max="18"
+                      className="
+                        w-full rounded-2xl border border-slate-200
+                        bg-slate-50
+                        px-5 py-3
+                        text-lg font-semibold
+                        outline-none
+                        transition-all
+                        focus:border-yellow-400
+                        focus:ring-4
+                        focus:ring-yellow-100
+                      "
+                      value={age}
+                      onChange={(e) => setAge(Math.max(3, Math.min(18, parseInt(e.target.value) || 5)))}
+                    />
+                  </div>
+
+                  <div className="flex-1">
+                    <label className="block text-sm font-semibold text-slate-700 mb-2">
+                      Number of Questions
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="10"
+                      className="
+                        w-full rounded-2xl border border-slate-200
+                        bg-slate-50
+                        px-5 py-3
+                        text-lg font-semibold
+                        outline-none
+                        transition-all
+                        focus:border-yellow-400
+                        focus:ring-4
+                        focus:ring-yellow-100
+                      "
+                      value={numQuestions}
+                      onChange={(e) => setNumQuestions(Math.max(1, Math.min(10, parseInt(e.target.value) || 3)))}
+                    />
+                  </div>
+                </div>
+                
                 <div className="flex flex-col gap-3 md:flex-row">
                   <input
                     className="

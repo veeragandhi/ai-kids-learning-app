@@ -1,6 +1,143 @@
 import { NextResponse } from "next/server";
 import { generateAnswer, generateAnswerStream } from "@/lib/ai";
 import { getRelevantContext } from "@/lib/retrieval";
+import { OCR_MARKER_GUARD, toTeachingText } from "@/lib/ocr";
+
+const QUIZ_STOPWORDS = new Set([
+  "what", "which", "how", "who", "why", "when", "where",
+  "can", "do", "does", "is", "are", "was", "were",
+  "a", "an", "the", "has", "have", "had", "with", "like",
+  "many", "much", "more", "most", "of", "in", "on", "for",
+  "to", "and", "or", "s", "t", "it", "its",
+]);
+
+function quizContentWords(text: string): string[] {
+  return (String(text).toLowerCase().match(/[a-z0-9]+/g) || [])
+    .filter((w) => w.length > 1 && !QUIZ_STOPWORDS.has(w));
+}
+
+// How much do the options just echo the question stem?
+// 1.0 = an option repeats the question wording (e.g. Q asks about
+// "one or two children" and an option IS "One or two children").
+function echoScore(question: string, options: string[]): number {
+  const qWords = new Set(quizContentWords(question));
+  const qLower = String(question).toLowerCase();
+  let max = 0;
+  for (const opt of options) {
+    const oWords = quizContentWords(opt);
+    if (oWords.length === 0) continue;
+    const oLower = String(opt).toLowerCase().trim();
+    // Full-phrase echo: option text appears inside the question.
+    if (oLower.length > 4 && qLower.includes(oLower)) {
+      max = Math.max(max, 1);
+      continue;
+    }
+    const common = oWords.filter((w) => qWords.has(w)).length;
+    max = Math.max(max, common / oWords.length);
+  }
+  return max;
+}
+
+// Pick the option best supported by the retrieved context: find the
+// context sentence closest to the question, then the option closest to
+// that sentence. Synonym-aware so "big" matches "large", etc.
+function expandQuizSynonyms(words: string[]): Set<string> {
+  const out = new Set(words);
+  const groups: string[][] = [
+    ["big", "large"],
+    ["small", "little"],
+    ["mom", "mother", "parents", "parent"],
+    ["dad", "father", "parents", "parent"],
+    ["kid", "kids", "child", "children"],
+    ["grandma", "grandmother", "grandparents"],
+    ["grandpa", "grandfather", "grandparents"],
+  ];
+  for (const g of groups) {
+    if (words.some((w) => g.includes(w))) {
+      for (const w of g) out.add(w);
+    }
+  }
+  return out;
+}
+
+function pickAnswerForQuestion(question: string, options: string[], context: string): string {
+  const qWords = expandQuizSynonyms(quizContentWords(question));
+  const sentences = String(context || "")
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  if (sentences.length === 0) {
+    // No context: prefer the option that does NOT echo the stem.
+    let best = options[0];
+    let bestScore = Infinity;
+    for (const opt of options) {
+      const s = echoScore(question, [opt]);
+      if (s < bestScore) {
+        bestScore = s;
+        best = opt;
+      }
+    }
+    return best;
+  }
+  // Top sentence = most overlap with (synonym-expanded) question words.
+  let top = sentences[0];
+  let topScore = -1;
+  for (const s of sentences) {
+    const sSet = new Set(quizContentWords(s));
+    const hits = [...qWords].filter((w) => sSet.has(w)).length;
+    if (hits > topScore) {
+      topScore = hits;
+      top = s;
+    }
+  }
+  const topSet = new Set(quizContentWords(top));
+  let best = options[0];
+  let bestScore = -1;
+  for (const opt of options) {
+    const oWords = quizContentWords(opt);
+    if (oWords.length === 0) continue;
+    const hits = oWords.filter((w) => topSet.has(w)).length;
+    const score = hits / oWords.length;
+    if (score > bestScore) {
+      bestScore = score;
+      best = opt;
+    }
+  }
+  return best;
+}
+
+// Repair swapped option sets: if question A fits question B's options
+// better than its own (and vice versa), swap them back. Answers travel
+// with re-derivation from context so they stay valid + grounded.
+function fixSwappedQuizOptions(quiz: any, context = ""): any {
+  if (!Array.isArray(quiz) || quiz.length < 2) return quiz;
+  const fixed = quiz.map((q: any) => ({ ...q }));
+  for (let i = 0; i < fixed.length; i++) {
+    for (let j = i + 1; j < fixed.length; j++) {
+      const qi = String(fixed[i].question || "");
+      const qj = String(fixed[j].question || "");
+      const oi = Array.isArray(fixed[i].options) ? fixed[i].options : [];
+      const oj = Array.isArray(fixed[j].options) ? fixed[j].options : [];
+      if (oi.length !== 3 || oj.length !== 3) continue;
+      const currentEcho = echoScore(qi, oi) + echoScore(qj, oj);
+      const swappedEcho = echoScore(qi, oj) + echoScore(qj, oi);
+      // Swap only on a clear echo improvement so good quizzes are untouched.
+      if (swappedEcho + 0.15 < currentEcho) {
+        console.error(
+          `[quiz] swapping options between Q${i} and Q${j} (echo ${currentEcho.toFixed(2)} -> ${swappedEcho.toFixed(2)})`
+        );
+        const tmp = fixed[i].options;
+        fixed[i].options = fixed[j].options;
+        fixed[j].options = tmp;
+        // Re-derive answers from context so they match the new options.
+        fixed[i].answer = pickAnswerForQuestion(qi, fixed[i].options, context);
+        fixed[j].answer = pickAnswerForQuestion(qj, fixed[j].options, context);
+      }
+    }
+  }
+  return fixed;
+}
 
 function fixQuizAnswers(quiz: any): any {
   // Try to fix answers that are close to options (typos)
@@ -53,14 +190,25 @@ function fixQuizAnswers(quiz: any): any {
 
     return {
       ...q,
-      answer: bestScore > 0.5 ? bestMatch : normalizedAnswer || normalizedOptions[0]
+      // Always snap the answer into the options so validation can pass.
+      answer: bestScore > 0.5 ? bestMatch : (normalizedOptions.includes(normalizedAnswer) ? normalizedAnswer : bestMatch)
     };
   });
 }
 
-function validateQuizFormat(quiz: any): boolean {
+function validateQuizFormat(quiz: any, expectedCount?: number): boolean {
   if (!Array.isArray(quiz)) {
     console.error("[quiz] Invalid format: quiz is not an array");
+    return false;
+  }
+
+  if (quiz.length === 0) {
+    console.error("[quiz] Invalid format: quiz is empty");
+    return false;
+  }
+
+  if (typeof expectedCount === "number" && quiz.length !== expectedCount) {
+    console.error(`[quiz] Invalid format: got ${quiz.length} questions, expected ${expectedCount}`);
     return false;
   }
   
@@ -102,6 +250,13 @@ function validateQuizFormat(quiz: any): boolean {
     // Check exactly 3 options
     if (q.options.length !== 3) {
       console.error(`[quiz] Question ${idx}: has ${q.options.length} options, need exactly 3`);
+      return false;
+    }
+    
+    // Check for duplicate options
+    const uniqueOptions = new Set(q.options.map((opt: string) => opt.trim().toLowerCase()));
+    if (uniqueOptions.size !== 3) {
+      console.error(`[quiz] Question ${idx}: has duplicate options [${q.options.map((o: string) => `"${o}"`).join(", ")}]`);
       return false;
     }
     
@@ -207,6 +362,10 @@ function repairQuizJson(raw: string) {
   if (arrayEnd !== -1) {
     cleaned = cleaned.substring(0, arrayEnd + 1);
   }
+
+  // Convert single-quoted values to double-quoted values
+  // This handles cases like: "answer": '1' -> "answer": "1"
+  cleaned = cleaned.replace(/:\s*'([^']*?)'/g, ': "$1"');
 
   cleaned = cleaned
     .replace(/"reason"\s*:/g, '"answer":')
@@ -327,31 +486,52 @@ function parseQuizArrayManually(raw: string) {
 
 function safeParseQuiz(cleanedQuiz: string) {
   try {
-    return JSON.parse(cleanedQuiz);
-  } catch (error) {
-    const repaired = repairQuizJson(cleanedQuiz);
-    const arrayText = extractFirstJsonArray(repaired) || extractFirstJsonArray(cleanedQuiz);
-
-    if (arrayText) {
-      try {
-        return JSON.parse(arrayText);
-      } catch (arrayError) {
-        console.error("[quiz] extractFirstJsonArray parse failed:", arrayError, "arrayText:", arrayText);
-      }
+    const parsed = JSON.parse(cleanedQuiz);
+    // Validate all questions
+    if (Array.isArray(parsed) && parsed.every(isValidQuizQuestion)) {
+      return parsed;
     }
+    console.error("[quiz] Parsed JSON but questions failed validation");
+  } catch (error) {
+    console.error("[quiz] JSON parse failed:", error);
+  }
 
+  const repaired = repairQuizJson(cleanedQuiz);
+  const arrayText = extractFirstJsonArray(repaired) || extractFirstJsonArray(cleanedQuiz);
+
+  if (arrayText) {
     try {
-      return JSON.parse(repaired);
-    } catch (repairError) {
-      console.error("[quiz] repair parse failed:", repairError, "repaired:", repaired);
-      const manual = parseQuizArrayManually(repaired);
-      if (manual.length > 0) {
-        return manual;
+      const parsed = JSON.parse(arrayText);
+      if (Array.isArray(parsed) && parsed.every(isValidQuizQuestion)) {
+        return parsed;
       }
-      const manualOriginal = parseQuizArrayManually(cleanedQuiz);
-      return manualOriginal.length > 0 ? manualOriginal : null;
+      console.error("[quiz] extractFirstJsonArray parse succeeded but validation failed");
+    } catch (arrayError) {
+      console.error("[quiz] extractFirstJsonArray parse failed:", arrayError, "arrayText:", arrayText);
     }
   }
+
+  try {
+    const parsed = JSON.parse(repaired);
+    if (Array.isArray(parsed) && parsed.every(isValidQuizQuestion)) {
+      return parsed;
+    }
+    console.error("[quiz] Repaired JSON parsed but validation failed");
+  } catch (repairError) {
+    console.error("[quiz] repair parse failed:", repairError, "repaired:", repaired);
+  }
+
+  const manual = parseQuizArrayManually(repaired);
+  if (manual.length > 0 && manual.every(isValidQuizQuestion)) {
+    return manual;
+  }
+  
+  const manualOriginal = parseQuizArrayManually(cleanedQuiz);
+  if (manualOriginal.length > 0 && manualOriginal.every(isValidQuizQuestion)) {
+    return manualOriginal;
+  }
+
+  return null;
 }
 
 function normalizeRawQuiz(raw: string) {
@@ -383,83 +563,341 @@ function cleanRawQuiz(raw: string) {
   return cleaned;
 }
 
-function buildQuizRetryPrompt(raw: string, context: string, topic: string, age: number) {
-  return `The previous response was invalid. Extract ONLY the valid JSON array below, with exactly 3 objects and no extra text.
+function buildQuizRetryPrompt(raw: string, context: string, topic: string, age: number, numQuestions: number = 3) {
+  let vocabularyGuidance = "";
+  
+  if (age < 7) {
+    vocabularyGuidance = `
+Use SIMPLE vocabulary appropriate for age ${age}:
+- Use "Mom and Dad" instead of "Parents" or "Couple"
+- Use "Big family" instead of "Large family"
+- Use "Small family" not "Nuclear family"
+- Avoid: couple, nuclear, joint, consist, usually`;
+  } else if (age < 10) {
+    vocabularyGuidance = `
+Use CLEAR vocabulary appropriate for age ${age}:
+- Can use "parents" and "family members"
+- Can use "grandparents", "children", "siblings"
+- Explain concepts clearly`;
+  }
+
+  return `The previous response was invalid or had bad questions. Fix these issues:
+
+⚠️ CRITICAL RULES - FOLLOW STRICTLY:
+
+1. LANGUAGE: Write ONLY in ENGLISH. Do NOT mix languages.
+   ✗ DON'T: "¿Qué tipo..." (Spanish)
+   ✓ DO: "What type..." (English only)
+
+2. CONTENT SOURCE: Use ONLY information from the provided CONTEXT.
+   ✗ DON'T: Add facts from outside knowledge
+   ✗ DON'T: Hallucinate information
+   ✓ DO: Base every question on the CONTEXT provided
+
+3. QUESTIONS MUST BE QUESTIONS, NOT STATEMENTS:
+   ✗ BAD: "A family makes a home" (statement)
+   ✓ GOOD: "What does a family make?" (question)
+   Questions MUST have a "?" and start with: What, Which, How, Who, Why, When, Where
+
+4. NO BRACKETS IN OPTIONS:
+   ✗ BAD: "(Small family)" or "[Small family]"
+   ✓ GOOD: "Small family"
+
+5. EACH QUESTION MUST BE SPECIFIC about what it asks
+6. ONLY ONE option should be correct - others must be clearly FALSE
+7. OPTIONS MUST BELONG TO THEIR OWN QUESTION. Never copy an option set
+   from one question onto another. Each question's options must use NEW
+   words — an option must NOT repeat the question's key phrase.
+   ✗ BAD: "Which family has one or two children?" + options: [One or two children, Five or more children, No children] (option just repeats the question!)
+   ✓ GOOD: "Which family has one or two children?" + options: [Small family, Large family, Single parent household]
+   ✗ BAD: "What's a big family like?" + options: [Small family, Large family, Just a house] (options copied from the other question!)
+   ✓ GOOD: "What's a big family like?" + options: [Has many children, Has no children, Is just a house]
+8. Use vocabulary appropriate for age ${age}
+${vocabularyGuidance}
 
 Invalid response:
 ${raw}
 
-Return EXACTLY one JSON array only:
+Examples of GOOD questions:
+✗ "Which describes a family?" + options: [one child, one or two children, many children] - all are valid!
+✓ "What family has one or two children?" + options: [Small family, Large family, Just one child] - only one is correct!
+
+✗ "A family makes a home" - this is a STATEMENT, not a question!
+✓ "What makes a home?" - this IS a QUESTION!
+
+Return EXACTLY one JSON array with exactly ${numQuestions} question objects:
 [
-  {"question":"...","options":["...","...","..."],"answer":"..."},
-  {"question":"...","options":["...","...","..."],"answer":"..."},
-  {"question":"...","options":["...","...","..."],"answer":"..."}
+  {"question":"...","options":["option1","option2","option3"],"answer":"option1"},
+  {"question":"...","options":["option1","option2","option3"],"answer":"option2"}
+  ...repeat until ${numQuestions} total questions...
 ]
 
-No markdown, no comments, no backticks, no extra text.
-Each answer must be a single string matching one of the options.
-If you cannot produce valid JSON, return [].`;
+CRITICAL RULES:
+- Return EXACTLY ${numQuestions} questions
+- Questions MUST be specific and clear
+- ONLY ONE option is truly correct
+- Other options must be clearly FALSE (not alternative correct answers)
+- Use vocabulary for age ${age}
+- Use DOUBLE QUOTES (") for all strings, NEVER single quotes (')
+- No markdown, no comments, no backticks
+If you cannot produce valid JSON, return [];`;
 }
 
-function defaultQuizForTopic(topic: string) {
+function isValidQuizQuestion(question: any): boolean {
+  if (!question || typeof question !== "object") return false;
+  if (typeof question.question !== "string" || !question.question.trim()) return false;
+  if (!Array.isArray(question.options) || question.options.length !== 3) return false;
+  if (typeof question.answer !== "string" || !question.answer.trim()) return false;
+
+  // Check that question is actually a question, not a statement
+  const questionText = question.question.trim();
+  const questionStarters = ["What", "Which", "How", "Who", "Why", "When", "Where", "Can", "Do", "Does", "Is", "Are"];
+  const startsWithQuestion = questionStarters.some(starter => 
+    questionText.toLowerCase().startsWith(starter.toLowerCase())
+  );
+  if (!startsWithQuestion || !questionText.includes("?")) {
+    console.error("[quiz] Invalid: not a proper question:", questionText);
+    return false;
+  }
+
+  // Check that all options are strings and have no brackets
+  if (!question.options.every((opt: any) => typeof opt === "string" && opt.trim())) return false;
+  
+  // Check for brackets in options
+  for (const opt of question.options) {
+    if (/[\(\)\[\]\{\}]/.test(opt)) {
+      console.error("[quiz] Invalid: option contains brackets:", opt);
+      return false;
+    }
+  }
+
+  // Check for duplicate options
+  const uniqueOptions = new Set(question.options.map((opt: string) => opt.trim().toLowerCase()));
+  if (uniqueOptions.size !== 3) {
+    console.error("[quiz] Invalid: duplicate options detected");
+    return false;
+  }
+
+  // Check that answer is one of the options
+  const answerTrimmed = question.answer.trim();
+  const hasAnswer = question.options.some(
+    (opt: string) => opt.trim().toLowerCase() === answerTrimmed.toLowerCase()
+  );
+  if (!hasAnswer) {
+    console.error("[quiz] Invalid: answer not in options");
+    return false;
+  }
+
+  return true;
+}
+
+function buildContextFallbackQuiz(context: string, topic: string, count: number) {
+  // Deterministic grounded fallback: build simple questions from real lesson
+  // sentences so we NEVER return meta junk like "What is the main subject?".
   const safeTopic = typeof topic === "string" && topic.trim() ? topic.trim().replace(/"/g, "'") : "this topic";
-  return [
-    {
-      question: `What is the main subject of this quiz?`,
-      options: [safeTopic, "A different subject", "I don't know"],
-      answer: safeTopic,
-    },
-    {
-      question: `Which topic is this quiz about?`,
-      options: [safeTopic, "Another topic", "Something else"],
-      answer: safeTopic,
-    },
-    {
-      question: `What was this quiz intended to teach?`,
-      options: [safeTopic, "History", "Math"],
-      answer: safeTopic,
-    },
-  ];
+  const sentences = context
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 25 && s.length < 220 && /[a-zA-Z]{3,}/.test(s));
+  const unique = [...new Set(sentences)].slice(0, Math.max(count, 1));
+  const quiz: { question: string; options: string[]; answer: string }[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < count; i++) {
+    const sentence = unique[i % Math.max(unique.length, 1)] || `${safeTopic} is described in the lesson.`;
+    const words = sentence.replace(/[.?!,;:()[\]{}"]/g, "").split(/\s+/).filter((w) => w.length > 3);
+    const keyword = [...words].reverse().find((w) => !seen.has(w.toLowerCase())) || words[words.length - 1] || safeTopic;
+    seen.add(keyword.toLowerCase());
+    const question = `According to the lesson, which is true about ${safeTopic}?`;
+    const correct = sentence.length <= 110 ? sentence : sentence.slice(0, 107) + "...";
+    quiz.push({
+      question,
+      options: [correct, `Something not stated in the lesson`, `I don't know`],
+      answer: correct,
+    });
+  }
+  return quiz;
+}
+
+function defaultQuizForTopic(topic: string, count = 3, context = "") {
+  if (context && context.trim().length > 0) {
+    return buildContextFallbackQuiz(context, topic, count);
+  }
+  const safeTopic = typeof topic === "string" && topic.trim() ? topic.trim().replace(/"/g, "'") : "this topic";
+  return Array.from({ length: count }, (_, i) => ({
+    question: `What did the lesson say about ${safeTopic} (fact ${i + 1})?`,
+    options: [`A fact from the lesson`, `Something not in the lesson`, `I don't know`],
+    answer: `A fact from the lesson`,
+  }));
 }
 
 function buildQuizPrompt(
   context: string,
   topic: string,
-  age: number
+  age: number,
+  numQuestions: number = 3
 ) {
-  return `You are a quiz creator for a ${age}-year-old child.
+  let ageGuidance = "";
+  let vocabularyGuidance = "";
+  
+  if (age < 7) {
+    ageGuidance = "Use VERY simple words. Short sentences (5-8 words max). Ask about obvious facts.";
+    vocabularyGuidance = `
+Use SIMPLE vocabulary appropriate for age ${age}:
+- Use "Mom and Dad" instead of "Parents"
+- Use "Mom and Dad" instead of "Couple"
+- Use "Grandma and Grandpa" instead of "Grandparents"
+- Use "Brother and Sister" or "Siblings" instead of "Siblings"
+- Use "Big family" instead of "Large family"
+- Use "Small family" instead of "Nuclear family"
+- Use "Uncles and Aunts" clearly explained
+- Avoid: couple, nuclear, joint, consist, usually
+- Use: has, includes, made of, lives with`;
+  } else if (age < 10) {
+    ageGuidance = "Use clear, everyday language. Medium sentences (8-12 words). Ask about facts and simple definitions.";
+    vocabularyGuidance = `
+Use CLEAR vocabulary appropriate for age ${age}:
+- Can use "parents" but also say "mom and dad"
+- Can use "family" and "members"
+- Can use "grandparents" clearly
+- Can use "children" and "siblings"
+- Avoid complex words: joint, nuclear, extended
+- Explain concepts simply`;
+  } else {
+    ageGuidance = "Use proper terms. Can have longer sentences. Ask about concepts and relationships.";
+    vocabularyGuidance = `Use age-appropriate vocabulary and concepts for age ${age}:
+- Can use: family types, members, generations, extended, nuclear, joint
+- Explain relationships clearly`;
+  }
+
+  return `You are a quiz creator for a ${age}-year-old child. ${ageGuidance}
+
+⚠️ CRITICAL RULES - FOLLOW STRICTLY:
+
+1. LANGUAGE: Write ONLY in ENGLISH. Do NOT mix languages or translate to other languages.
+   ✗ DON'T: "¿Qué tipo de familia..." (Spanish)
+   ✓ DO: "What type of family..." (English)
+
+2. CONTENT SOURCE: Use ONLY information from the provided CONTEXT below.
+   ✗ DON'T: Add facts from outside knowledge
+   ✗ DON'T: Hallucinate or guess information
+   ✓ DO: Base every question on the CONTEXT text
+   ✗ DON'T: Ask about things not mentioned in the CONTEXT
+
+3. QUESTIONS MUST BE QUESTIONS, NOT STATEMENTS:
+   ✗ BAD: "A family makes a home" (statement)
+   ✗ BAD: "Families are important" (statement)
+   ✓ GOOD: "What does a family do?" (question)
+   ✓ GOOD: "Why are families important?" (question)
+   Questions MUST start with: What, Which, How, Who, Why, When, Where
+
+4. OPTIONS MUST NOT HAVE BRACKETS:
+   ✗ BAD: "(Small family)" or "[Small family]" or "{Small family}"
+   ✓ GOOD: "Small family"
+   Remove all brackets, parentheses, and braces from options!
+
+CRITICAL: VOCABULARY RULES FOR AGE ${age}:
+${vocabularyGuidance}
 
 Output must be valid JSON only. Do not include any markdown, explanation, or extra text.
 
 Return EXACTLY one JSON array. It must start with '[' and end with ']'.
 Do not return anything else.
 
-The array must contain exactly 3 objects. Each object must contain only these keys:
+The array must contain exactly ${numQuestions} objects. Each object must contain only these keys:
 - question
 - options
 - answer
 
+CRITICAL RULES FOR QUESTIONS:
+1. Questions MUST be CLEAR and EXPLICIT. State exactly WHAT is being asked.
+   BAD: "Which of these is correct?" (vague)
+   GOOD: "What family size has one or two children?" (specific)
+
+2. Questions MUST have ONE UNAMBIGUOUS correct answer.
+   BAD: "Which describes a family?" + options: [one child, one or two children, many children] - ALL are valid families!
+   GOOD: "What family size has one or two children?" + options: [Small family, Large family, Just one person] - Only one correct!
+
+3. Questions must avoid options that are ALL true. UNLESS you use "All of the above" (still exactly 3 options total):
+   BAD: "What does a family usually consist of?" + options: [Single parent, Couple with children, Just parents] - confusing!
+   GOOD: "What can a family have?" + options: [Mom and Dad with kids, Grandparents, All of the above] - clear that all are valid!
+
+4. When to use "All of the above" (always exactly 3 options total):
+   ✓ USE: "What can a family include?" + options: [Parents with children, Grandparents, All of the above]
+   ✓ USE: "Which are members of a family?" + options: [Mom with Dad and Kids, Grandparents, All of the above]
+   ✗ DON'T USE: For questions about categories/types where only ONE is correct
+   ✗ DON'T USE: For definitional questions
+
+5. NEVER ask vague questions. Be SPECIFIC about what you're testing:
+   ✓ "Who lives in a small family?"
+   ✓ "What family includes grandparents?"
+   ✓ "How many children are in a small family?"
+   ✓ "What can a family have?"
+   ✗ "Which of these is correct?"
+   ✗ "What is a family?"
+   ✗ "What is the main subject of this quiz?" (meta question - NEVER ask this)
+   ✗ "Which topic is this quiz about?" (meta question - NEVER ask this)
+   ✗ "What was this quiz intended to teach?" (meta question - NEVER ask this)
+
+5b. OPTIONS MUST BELONG TO THEIR OWN QUESTION — never swap option sets
+    between questions, and no option may just repeat the question stem:
+   ✗ BAD: "Which family has one or two children?" + [One or two children, Five or more children, No children] (option repeats the question!)
+   ✓ GOOD: "Which family has one or two children?" + [Small family, Large family, Single parent household]
+   ✗ BAD: "What's a big family like?" + [Small family, Large family, Just a house] (options copied from the other question!)
+   ✓ GOOD: "What's a big family like?" + [Has many children, Has no children, Is just a house]
+
+6. Each question must have EXACTLY 3 options (can include "All of the above" as one option).
+7. EXACTLY ONE option is correct.
+8. The answer MUST exactly match one of the 3 options exactly.
+
 The question value must be a string.
 The options value must be an array of exactly 3 strings.
 The answer value must be a single string exactly matching one of the options.
-Do not use an array for answer.
 
-Example output exactly:
-[{"question":"What do dinosaurs eat?","options":["Plants","Meat","Ice cream"],"answer":"Meat"},{"question":"When did dinosaurs live?","options":["100 years ago","1 million years ago","65 million years ago"],"answer":"65 million years ago"},{"question":"How big was a T-Rex?","options":["Small like a cat","Big like a bus","Huge like a mountain"],"answer":"Big like a bus"}]
+IMPORTANT: Use DOUBLE QUOTES (") for ALL string values, NEVER use single quotes (').
+
+EXAMPLES OF EXCELLENT QUESTIONS (age-appropriate and unambiguous):
+
+For a 6-year-old about families:
+Example WITHOUT "All of the above" (definitional questions):
+[{"question":"What usually makes a family?","options":["Mom and Dad with kids","Just toys","Just a house"],"answer":"Mom and Dad with kids"},{"question":"How many kids are in a small family?","options":["One or two children","Five or more children","No children"],"answer":"One or two children"}]
+
+Example WITH "All of the above" (membership/inclusion questions, still exactly 3 options):
+[{"question":"What can a family have?","options":["Mom and Dad with kids","Grandparents and Aunts","All of the above"],"answer":"All of the above"}]
+
+For a 9-year-old about families:
+Example WITHOUT "All of the above" (category questions):
+[{"question":"Which family type has only parents and one or two children?","options":["Small family","Large family","Single parent household"],"answer":"Small family"}]
+
+Example WITH "All of the above" (membership questions, still exactly 3 options):
+[{"question":"Which of these can be family members?","options":["Parents and Siblings","Grandparents","All of the above"],"answer":"All of the above"}]
+
+Notice:
+- When using "All of the above": Question asks WHAT CAN or WHICH...CAN (membership/inclusion)
+- When NOT using: Question asks WHAT IS or HOW MANY (categories/definitions)
+- Each question is SPECIFIC about what it asks
+- Only ONE option is clearly correct
+- Vocabulary matches the age
+- Language is simple and clear
 
 Rules:
-- Exactly 3 questions.
-- Exactly 3 options per question.
-- answer must exactly match one of the 3 options.
-- No extra keys, no reason, no explanation, no comments.
-- No trailing commas.
-- No nested arrays except the options array.
-- No unescaped newlines inside string values.
+- Exactly ${numQuestions} questions
+- Each VERY SPECIFIC about what is being asked
+- Exactly 3 DIFFERENT options per question
+- Only ONE option is correct - other two must be clearly FALSE
+- All vocabulary appropriate for age ${age}
+- No ambiguous questions where multiple options could be correct
+- ALWAYS use double quotes, never single quotes
+- No extra keys, no reason, no explanation, no comments
+- No trailing commas
+- No nested arrays except the options array
+- Base questions DIRECTLY on the provided context
 
 CONTEXT:
 ${context}
 
-NOW create 3 quiz questions about ${topic}:`;
+NOW create ${numQuestions} quiz questions about ${topic}.
+REMEMBER: Be SPECIFIC. Make sure only ONE option is clearly correct. Use vocabulary for age ${age}:`;
 }
 
 export async function POST(req: Request) {
@@ -471,10 +909,18 @@ export async function POST(req: Request) {
   const stream = url.searchParams.get("stream") === "true";
   
   const body = await req.json();
-  const { topic, age = 5 } = body;
+  const { topic, age = 5, numQuestions: rawNumQuestions = 3 } = body;
+  // Clamp to the same 1-10 range the UI allows so "4" is always respected.
+  const parsedCount = parseInt(String(rawNumQuestions), 10);
+  const numQuestions = Number.isFinite(parsedCount)
+    ? Math.max(1, Math.min(10, parsedCount))
+    : 3;
 
   const retrievalStart = Date.now();
-  const context = await getRelevantContext(topic);
+  // Fetch extra chunks for quiz so small lessons still yield enough distinct facts.
+  // Teach from prose: the worksheet's own questions otherwise get copied verbatim
+  // as quiz "questions" that are really statements ("A large family has ...").
+  const context = toTeachingText(await getRelevantContext(topic, 5, 0.30));
   const retrievalTime = Date.now() - retrievalStart;
   console.log(`[quiz] RAG retrieval took ${retrievalTime}ms`);
   
@@ -485,7 +931,7 @@ export async function POST(req: Request) {
     });
   }
 
-  const prompt = buildQuizPrompt(context, topic, age);
+  const prompt = buildQuizPrompt(context, topic, age, numQuestions);
   
   if (stream) {
     // For quiz, stream the raw response and accumulate JSON
@@ -529,7 +975,9 @@ export async function POST(req: Request) {
           try {
             let parsed = safeParseQuiz(cleanedQuiz);
             if (parsed) {
-              parsed = fixQuizAnswers(parsed);
+              // Un-swap option sets first (answers travel with re-derivation),
+              // then snap answers into the (possibly swapped) options.
+              parsed = fixQuizAnswers(fixSwappedQuizOptions(parsed, context));
               cleanedQuiz = JSON.stringify(parsed);
             } else {
               console.error("[quiz] streaming parse failed, raw:", cleanedQuiz);
@@ -557,8 +1005,11 @@ export async function POST(req: Request) {
   }
   
   // Non-streaming response (original behavior)
+  // Scale the token budget with the requested count so asking for 4+ questions
+  // is not cut off mid-JSON (a common cause of falling back to 3 questions).
+  const tokenBudget = Math.max(1200, Math.min(4000, 500 + numQuestions * 450));
   const llmStart = Date.now();
-  const quiz = await generateAnswer(prompt, 2000);
+  const quiz = await generateAnswer(prompt, tokenBudget);
   const llmTime = Date.now() - llmStart;
   console.log(`[quiz] LLM generation took ${llmTime}ms`);
 
@@ -567,21 +1018,21 @@ export async function POST(req: Request) {
 
   if (!parsed) {
     console.log("[quiz] first parse failed, retrying with a stricter prompt");
-    const retryPrompt = buildQuizRetryPrompt(quiz, context, topic, age);
-    const retryResponse = await generateAnswer(retryPrompt, 2000);
+    const retryPrompt = buildQuizRetryPrompt(quiz, context, topic, age, numQuestions);
+    const retryResponse = await generateAnswer(retryPrompt, tokenBudget);
     const retryCleaned = cleanRawQuiz(retryResponse);
     parsed = safeParseQuiz(retryCleaned);
     if (!parsed) {
       console.error("[quiz] retry parse also failed", retryCleaned);
-      parsed = defaultQuizForTopic(topic);
+      parsed = defaultQuizForTopic(topic, numQuestions, context);
     }
   }
 
-  parsed = fixQuizAnswers(parsed);
+  parsed = fixQuizAnswers(fixSwappedQuizOptions(parsed, context));
 
-  if (!validateQuizFormat(parsed)) {
+  if (!validateQuizFormat(parsed, numQuestions)) {
     console.error("[quiz] Invalid quiz format after fixes:", JSON.stringify(parsed));
-    parsed = defaultQuizForTopic(topic);
+    parsed = defaultQuizForTopic(topic, numQuestions, context);
   }
 
   const totalTime = Date.now() - startTime;
