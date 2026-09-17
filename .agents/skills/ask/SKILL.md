@@ -75,6 +75,17 @@ The intended learning progression is explicit and should not be replaced with an
 
 When implementing escalation, keep hint state attached to the question or learning session, record `hintLevelReached`, and make the current hint level visible to the workflow. Do not silently jump from a child's uncertainty to an answer. A request such as “just tell me” should receive an easier guiding question unless the product explicitly defines it as an escalation.
 
+### Uncertainty And Graceful Ending
+
+Children legitimately say they do not remember or do not know. `answer` mode must treat these as a learning signal, not as off-topic answers that trigger “That idea is not what the lesson is about.”
+
+- `isUncertainAnswer(text)` recognizes uncertainty with flexible spelling and phrasing, including `dont`/`don't`/`do not`, misspellings such as `remeber`, `forgot`, `not sure`, `no idea`, and `that's all I remember`.
+- Before grading, `gradeStudentAnswer` checks uncertainty first. If the child's text also contains substantive lesson tokens (filtered by `hasRelevantContextTokens`, which ignores stop/uncertainty words such as `dont`, `remember`, `tell`, `me`), the substantive content is extracted by `extractContentAfterUncertainty` and graded recursively so a correct idea wrapped in uncertainty is not discarded.
+- When the child truly cannot recall, respond with a kind hint once: "Let's use a clue from the lesson..." If the child is uncertain again (2 or more uncertainty turns counted over a sliding window of the last few child answers), end the exchange gracefully instead of looping:
+  - `buildAnswerSummary(context, question)` composes a short grounded answer from `bestFactList`, e.g. "Plants mainly need things like water, sunlight, air, and nutrients from the soil to grow well."
+  - The response uses `responseState: "don't_remember"`, `continueLearning: false`, and the next prompt "Want to try another question from the lesson?".
+- **Never loop indefinitely.** After the graceful end the client moves to the explanation/complete flow rather than repeating the same question.
+
 ### `answer`
 
 Input: original `question`, `guidingQuestion`, and `studentAnswer`. Output: `type: "evaluation"`, `correctness`, kind `feedback`, exact `nextPrompt: "How did you know?"`, and `hintLevel`. Evaluation must be based only on retrieved context and distinguish correct, partially correct, and incorrect answers.
@@ -111,6 +122,7 @@ Every change must preserve the following invariants unless the product contract 
 - **Honest uncertainty:** when retrieval does not contain the answer, the system must say that information is unavailable or ask for more material. It must not hallucinate an answer.
 - **Correct-answer recognition:** `answer` mode must recognize a correct answer even when it is brief, uses child-friendly wording, or includes extra relevant detail.
 - **Appropriate feedback:** incorrect, partial, uncertain, irrelevant, and correct answers receive distinct, kind, actionable feedback. Feedback should invite evidence and never shame the child or accidentally disclose an answer.
+- **No indefinite loop:** the exchange must not keep asking the same question forever. Repeated uncertainty ("I don't remember") ends gracefully with a short grounded summary and an invitation to move on.
 
 ### API and flow behavior
 
@@ -158,6 +170,7 @@ Check these before attributing a regression to the model:
 - Retrieval is performed for the selected text, so answer/explanation follow-ups depend on the original question being included by the caller.
 - A verbose or overly enthusiastic fallback can accidentally reveal the answer, praise unsupported facts, or make the child-facing flow inconsistent with the Socratic plan.
 - The model may return another language or a yes/no question even when prompted otherwise; language, brevity, and question shape need deterministic validation or a safe fallback.
+- Repeated "I don't remember"/"I don't know" answers can loop if uncertainty is misclassified as off-topic or if uncertainty-state counting requires all previous answers to be uncertain. Uncertainty detection must catch flexible spellings, and the graceful-end counter must use a sliding window of recent answers (see "Uncertainty And Graceful Ending").
 
 When debugging, capture the request mode, retrieval count and scores, prompt schema, model availability, parse result, and final normalized response. Do not log sensitive child content more broadly than the existing local diagnostics require.
 
@@ -205,6 +218,24 @@ Exercise additional endpoint boundaries with a local request tool or the Ask pag
 9. A generated guiding question that repeats the original: default clue question.
 
 For each case verify grounding, age-appropriate language, response type, required fields, and that raw model output or `_timing` is not presented as child-facing content. Record retrieval relevance, answer accuracy, and response latency for quality comparisons.
+
+## Demo Video Recording
+
+Demo videos are recorded with Playwright against the running dev server and the API is mocked with scripted responses so recordings are deterministic.
+
+- `scripts/record-ask-demo.mjs` records the Ask learning flow: it navigates from the home page to `/ask`, asks "should i give cardboard so that plants can grow", and walks through the full Socratic conversation including the graceful "I don't remember" ending and the final explanation screen.
+- `scripts/record-demo.mjs` records the broader upload → lesson → quiz flow. The `turns` / `responses` objects define the scripted conversation; keep them in sync with actual route behavior when the flow changes.
+- Both scripts record a WebM with Playwright and then convert it to **MP4 (H.264, yuv420p, `<file>.mp4`)** using `scripts/convert-to-mp4.mjs`. The intermediate WebM is deleted after conversion. MP4 is the required output format—do not ship WebM demo videos.
+- `convert-to-mp4.mjs` resolves ffmpeg from `FFMPEG_PATH`, then the project-local `ffmpeg-static` dev dependency, then a system `ffmpeg` on PATH.
+
+To record:
+
+```powershell
+npm run dev        # in one terminal (http://localhost:3000)
+node scripts/record-ask-demo.mjs   # or record-demo.mjs
+```
+
+Videos are written to `artifacts/demo-video/` (e.g. `AskDemo.mp4`). Rerun after Ask-flow changes that alter the conversation, and review the video to confirm the exact transcript, pacing, and ending behave as intended.
 
 ## Definition Of Done
 

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { generateAnswer, generateAnswerStream } from "@/lib/ai";
 import { getRelevantContext } from "@/lib/retrieval";
+import { OCR_MARKER_GUARD, toTeachingText } from "@/lib/ocr";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -66,6 +67,8 @@ function buildVideoScriptPrompt(context: string, topic: string, age: number): st
   return `You are creating a short educational video for a ${age}-year-old child about "${topic}".
 
 Use ONLY the context below. Do NOT add facts that aren't in the context.
+
+NOTE: ${OCR_MARKER_GUARD}
 
 CONTEXT:
 ${context}
@@ -152,7 +155,7 @@ export async function POST(req: Request) {
     // 1. RAG context
     console.log("[generate-video] fetching context for topic:", topic);
     const retrievalStart = Date.now();
-    const context = await getRelevantContext(topic);
+    const context = toTeachingText(await getRelevantContext(topic));
     const retrievalTime = Date.now() - retrievalStart;
     console.log("[generate-video] context retrieved, length:", context?.length || 0, `(${retrievalTime}ms)`);
     

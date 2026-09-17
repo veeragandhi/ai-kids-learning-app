@@ -37,6 +37,7 @@ interface VideoScript {
 
 export default function ClientLesson() {
   const [topic, setTopic] = useState("");
+  const [age, setAge] = useState(8);
   const [lesson, setLesson] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadingText, setLoadingText] = useState("");
@@ -58,9 +59,14 @@ export default function ClientLesson() {
 
   useEffect(() => {
     const topicFromUrl = searchParams.get("topic");
+    const ageFromUrl = Number(searchParams.get("age"));
 
     if (topicFromUrl) {
       setTopic(topicFromUrl);
+    }
+
+    if (Number.isFinite(ageFromUrl) && ageFromUrl >= 3 && ageFromUrl <= 18) {
+      setAge(Math.floor(ageFromUrl));
     }
   }, [searchParams]);
 
@@ -145,7 +151,7 @@ export default function ClientLesson() {
       const res = await fetch("/api/generate-video", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic, age: 6 }),
+        body: JSON.stringify({ topic, age }),
       });
       const data = await res.json();
       if (data.script) {
@@ -225,13 +231,13 @@ export default function ClientLesson() {
     setError("");
 
     try {
-      console.log("[lesson page] Generating lesson for topic:", topic);
+      console.log("[lesson page] Generating lesson for topic:", topic, "age:", age);
       const res = await fetch("/api/lesson", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ topic }),
+        body: JSON.stringify({ topic, age }),
       });
 
       console.log("[lesson page] Response status:", res.status);
@@ -345,10 +351,48 @@ export default function ClientLesson() {
 
               {/* Input Card */}
               <div className="rounded-3xl bg-white p-4 shadow-lg">
-                <div className="flex flex-col gap-3 md:flex-row">
-                  <input
-                    className="
-                      flex-1 rounded-2xl border border-slate-200
+                <div className="flex flex-col gap-3 md:flex-row md:items-end">
+                  <div className="md:w-28">
+                    <label
+                      htmlFor="lesson-age"
+                      className="mb-2 block text-sm font-semibold text-slate-700"
+                    >
+                      Your Age
+                    </label>
+                    <input
+                      id="lesson-age"
+                      type="number"
+                      min="3"
+                      max="18"
+                      value={age}
+                      onChange={(e) =>
+                        setAge(Math.max(3, Math.min(18, parseInt(e.target.value) || 8)))
+                      }
+                      className="
+                        w-full rounded-2xl border border-slate-200
+                        bg-slate-50
+                        px-5 py-4
+                        text-lg font-semibold
+                        outline-none
+                        transition-all
+                        focus:border-sky-400
+                        focus:ring-4
+                        focus:ring-sky-100
+                      "
+                    />
+                  </div>
+
+                  <div className="flex-1">
+                    <label
+                      htmlFor="lesson-topic"
+                      className="mb-2 block text-sm font-semibold text-slate-700"
+                    >
+                      What do you want to learn?
+                    </label>
+                    <input
+                      id="lesson-topic"
+                      className="
+                      w-full rounded-2xl border border-slate-200
                       bg-slate-50
                       px-5 py-4
                       text-lg
@@ -358,10 +402,11 @@ export default function ClientLesson() {
                       focus:ring-4
                       focus:ring-sky-100
                     "
-                    value={topic}
-                    onChange={(e) => setTopic(e.target.value)}
-                    placeholder="What do you want to learn?"
-                  />
+                      value={topic}
+                      onChange={(e) => setTopic(e.target.value)}
+                      placeholder="What do you want to learn?"
+                    />
+                  </div>
 
                   <button
                     onClick={generateLesson}
@@ -514,7 +559,7 @@ export default function ClientLesson() {
                   </h2>
                   <p className="mt-2 text-red-700">{error}</p>
                   <p className="mt-4 text-sm text-red-600">
-                    Make sure Ollama is running with the mistral:latest model.
+                    Make sure Ollama is running with the gemma3:1b model.
                   </p>
                   <button
                     onClick={generateLesson}
@@ -545,7 +590,7 @@ export default function ClientLesson() {
                 <div>
                   <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-sky-100 px-4 py-2 text-sm font-semibold text-sky-700">
                     <BookOpen size={16} />
-                    Your AI Lesson
+                    Your AI Lesson · Age {age}
                   </div>
 
                   <h2 className="text-3xl font-extrabold text-slate-800">

@@ -1,4 +1,4 @@
-export async function generateAnswer(prompt: string, numPredict: number = 300) {
+export async function generateAnswer(prompt: string, numPredict: number = 300, temperature = 0.2) {
   const startTime = Date.now();
   console.log("[ai] Calling Ollama LLM...");
   
@@ -12,7 +12,7 @@ export async function generateAnswer(prompt: string, numPredict: number = 300) {
         model: "gemma3:1b",
         prompt,
         stream: false,
-        temperature: 0.2,
+        temperature,
         num_predict: numPredict
       })
     });

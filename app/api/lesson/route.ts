@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { generateAnswer, generateAnswerStream } from "@/lib/ai";
 import { getRelevantContext } from "@/lib/retrieval";
+import { BLANK_MARKER, OCR_MARKER_GUARD, toTeachingText } from "@/lib/ocr";
 
 // Add OPTIONS for CORS
 export async function OPTIONS(req: Request) {
@@ -14,32 +15,89 @@ export async function OPTIONS(req: Request) {
   });
 }
 
+function clampAge(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.max(3, Math.min(18, Math.floor(n))) : 8;
+}
+
+// Age-appropriate reading level (mirrors the age bands used by /api/quiz).
+function ageGuidance(age: number): string {
+  if (age <= 6) {
+    return "Use VERY simple words of 1-2 syllables. Keep sentences to 5-8 words. Talk like you are explaining to a small child.";
+  }
+  if (age <= 9) {
+    return "Use simple, clear words. Keep sentences to about 12 words. Explain any new word in a few words.";
+  }
+  return "Use clear words and some topic vocabulary. Keep sentences to about 15 words. Add one \"why\" or \"how\" detail.";
+}
+
+function lessonWordBudget(age: number): number {
+  if (age <= 6) return 80;
+  if (age <= 9) return 120;
+  return 160;
+}
+
 function buildLessonPrompt(context: string, topic: string, age: number) {
-  return `You are a strict teacher for a ${age}-year-old child.
+  return `You are a friendly teacher writing a mini-lesson for a ${age}-year-old child.
 
-CRITICAL - READ THIS FIRST:
-- Topic to teach: "${topic}"
-- You MUST teach ONLY about "${topic}"
-- Any content not about "${topic}" is IRRELEVANT and must be ignored
-- Create a lesson of MAXIMUM 200 words
+TOPIC: "${topic}"
+LENGTH: at most ${lessonWordBudget(age)} words
+READING LEVEL: ${ageGuidance(age)}
 
-HARD RULES (violating these loses all credibility):
-1. Use ONLY the context provided below about "${topic}"
-2. If the context does NOT contain information about "${topic}", respond EXACTLY:
+OUTPUT SHAPE (follow exactly):
+- Line 1: a short title of 2-6 words. No numbering, no "Lesson:" prefix.
+- Then: 2 or 3 short paragraphs that teach the idea in your own words.
+
+HARD RULES:
+1. Use ONLY the facts in the CONTEXT below. Never add facts from outside it.
+2. Explain the ideas in YOUR OWN simple words. Do NOT copy sentences from the context word-for-word.
+3. Never copy worksheet parts: no question numbers, no "Tick/Match/Fill/Circle" instructions, no answer options like "(a / b)", no checkbox marks.
+4. Never write HTML or markup such as <br>, and never write ${BLANK_MARKER} or [ ].
+5. Do not ask the child questions and do not include a quiz or numbered list.
+6. If the CONTEXT has nothing about "${topic}", reply with exactly:
    I don't know. Please ask a parent to add more information.
-3. Do NOT invent, assume, or add any facts not in the context
-4. Do NOT include unrelated information (even if in context)
-5. Do NOT make up stories, examples, or figures
-6. Do NOT explain why you can't answer - just say "I don't know"
 
-CONTEXT ABOUT "${topic}":
+NOTE: ${OCR_MARKER_GUARD}
+
+CONTEXT:
 ${context}
 
-Now, create the lesson about "${topic}" using ONLY the provided context.
-If the context doesn't describe "${topic}", respond with ONLY:
-I don't know. Please ask a parent to add more information.
+Write the lesson about "${topic}" now.
 
 LESSON:`;
+}
+
+// Safety net for the small model: strip markup and any worksheet scaffolding
+// that leaked past the prompt rules.
+function cleanLessonText(raw: string): string {
+  const out = (raw || "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/?[a-z][^>]*>/gi, "")
+    .replace(/\*\*/g, "")
+    .replace(/^\s*LESSON\s*:\s*/i, "")
+    .replace(/^\s*Lesson\s*:\s*/i, "");
+  const kept = out
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+/g, " ").trim())
+    .filter((line) => {
+      if (!line) return true;
+      if (/^\d+\s*[.)]\s/.test(line) && /\([^()\n]{1,60}\/[^()\n]{1,60}\)/.test(line)) {
+        return false;
+      }
+      if (/^\d{1,3}$/.test(line)) return false;
+      return true;
+    });
+  const cleaned = kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+
+  // A lesson must not ask questions (that is the Ask flow's job). Drop trailing
+  // question chatter such as "Would you like to learn more?" from the end only,
+  // and never shorten the lesson below teaching size.
+  const withoutTail = cleaned.replace(/(?:\n+[^\n?]*\?)+\s*$/, "").trim();
+  if (withoutTail && withoutTail.split(/\s+/).length >= 20) {
+    return withoutTail;
+  }
+  return cleaned;
 }
 
 export async function POST(req: Request) {
@@ -52,7 +110,12 @@ export async function POST(req: Request) {
     const stream = url.searchParams.get("stream") === "true";
     
     const body = await req.json();
-    const { topic, age = 5 } = body;
+    const topic = typeof body.topic === "string" ? body.topic.trim() : "";
+    const age = clampAge(body.age);
+
+    if (!topic) {
+      return NextResponse.json({ error: "A topic is required" }, { status: 400 });
+    }
 
     console.log(`[lesson] Generating lesson for topic: ${topic}, age: ${age}, stream: ${stream}`);
 
@@ -77,7 +140,10 @@ export async function POST(req: Request) {
       );
     }
 
-    const prompt = buildLessonPrompt(context, topic, age);
+    // Teach from prose, never from the worksheet's exercises. Falls back to the
+    // raw context when the text is not a worksheet.
+    const teachingContext = toTeachingText(context);
+    const prompt = buildLessonPrompt(teachingContext, topic, age);
     
     if (stream) {
       // Return streaming response
@@ -114,6 +180,8 @@ export async function POST(req: Request) {
     // Non-streaming response (original behavior)
     console.log("[lesson] Calling generateAnswer...");
     const llmStart = Date.now();
+    console.log("[lesson] STEP 6 - calling LLM");
+    console.log("[lesson] prompt length:", prompt.length);
     const lesson = await generateAnswer(prompt);
     const llmTime = Date.now() - llmStart;
     console.log(`[lesson] LLM generation took ${llmTime}ms, response length: ${lesson?.length || 0}`);
@@ -126,22 +194,31 @@ export async function POST(req: Request) {
       );
     }
 
-    // Clean up the response - remove "I don't know" preamble if it appears at the start
-    let cleanedLesson = lesson.trim();
+    // Clean up the response: strip markup/scaffolding, then remove an
+    // "I don't know" preamble if the model still added one.
+    let cleanedLesson = cleanLessonText(lesson);
     if (cleanedLesson.startsWith("I don't know")) {
       // If response is ONLY "I don't know", return it as-is
       if (cleanedLesson === "I don't know. Please ask a parent to add more information.") {
         const totalTime = Date.now() - startTime;
         console.log(`[lesson] Total time: ${totalTime}ms (retrieval: ${retrievalTime}ms, LLM: ${llmTime}ms)`);
-        return NextResponse.json({ lesson: cleanedLesson });
+        return NextResponse.json({ lesson: cleanedLesson, age });
       }
       // Otherwise, remove the preamble and keep the actual content
-      cleanedLesson = cleanedLesson.replace(/^I don't know\.\s+Please ask a parent to add more information\.\n\n/, "").trim();
+      cleanedLesson = cleanedLesson.replace(/^I don't know\.\s+Please ask a parent to add more information\.\n*/, "").trim();
+    }
+
+    if (!cleanedLesson) {
+      console.error("[lesson] Lesson was empty after cleaning");
+      return NextResponse.json(
+        { error: "The lesson came back empty. Please try again." },
+        { status: 502 }
+      );
     }
 
     const totalTime = Date.now() - startTime;
     console.log(`[lesson] Total time: ${totalTime}ms (retrieval: ${retrievalTime}ms, LLM: ${llmTime}ms)`);
-    return NextResponse.json({ lesson: cleanedLesson, _timing: { totalTime, retrievalTime, llmTime } });
+    return NextResponse.json({ lesson: cleanedLesson, age, _timing: { totalTime, retrievalTime, llmTime } });
   } catch (error) {
     console.error("[lesson] Fatal error:", error);
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
