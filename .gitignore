@@ -40,13 +40,12 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# local-only learning data (never publish kids' material)
-# Everything a parent uploads stays on this device. Only the synthetic
-# sample docs used by `npm run evaluate:ask` are tracked.
+# local-only learning data + runtime upload folder (never publish kids' material)
+# Everything a parent uploads stays on this device. The synthetic samples used by
+# `npm run evaluate:ask` live in .agents/skills/ask/fixtures and are restored
+# into uploads/ with `npm run seed:samples`.
+# The app creates this folder on first upload (app/api/upload/route.ts, lib/ocr-jobs.ts).
 /uploads/*
-!/uploads/animals.txt
-!/uploads/dinosaurs.txt
-!/uploads/plants.txt
 
 # generated vector store (embeds uploaded material -> local only)
 /embeddings/vectors.json

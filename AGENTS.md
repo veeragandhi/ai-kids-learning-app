@@ -100,5 +100,6 @@ Before considering a task complete:
 * npm run lint
 * npm run build
 * npm run evaluate:ask (for Ask changes — 22 scenarios, needs dev server + Ollama + sample docs)
+* Fresh clone: `npm run seed:samples` then `node scripts/reindex-uploads.mjs` — `uploads/` and `embeddings/vectors.json` are git-ignored (local-only data), fixtures live in `.agents/skills/ask/fixtures/`
 
 All changes should compile successfully.
