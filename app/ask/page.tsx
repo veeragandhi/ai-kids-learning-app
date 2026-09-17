@@ -14,8 +14,17 @@ type AskResponse = {
   nextPrompt?: string;
   score?: number;
   finalPrompt?: string;
+  retry?: boolean;
+  responseState?: string;
+  continueLearning?: boolean;
   source?: string;
   _timing?: { totalTime: number; retrievalTime: number; llmTime: number };
+  conversation?: ConversationTurn[];
+};
+
+type ConversationTurn = {
+  role: "child" | "assistant";
+  content: string;
 };
 
 export default function AskPage() {
@@ -25,17 +34,21 @@ export default function AskPage() {
   const [questionType, setQuestionType] = useState<"guided" | "creative">("guided");
   const [guidingQuestion, setGuidingQuestion] = useState("");
   const [studentAnswer, setStudentAnswer] = useState("");
+  const [lastStudentAnswer, setLastStudentAnswer] = useState("");
   const [explanation, setExplanation] = useState("");
   const [response, setResponse] = useState<AskResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [conversation, setConversation] = useState<ConversationTurn[]>([]);
 
   const reset = () => {
     setStage("ask");
     setGuidingQuestion("");
     setStudentAnswer("");
+    setLastStudentAnswer("");
     setExplanation("");
     setResponse(null);
+    setConversation([]);
     setError("");
   };
 
@@ -48,7 +61,7 @@ export default function AskPage() {
       const res = await fetch("/api/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, age, mode: "question", questionType }),
+        body: JSON.stringify({ question, age, mode: "question", questionType, conversation }),
       });
       const data = await res.json();
       if (!res.ok || data.error) {
@@ -66,6 +79,7 @@ export default function AskPage() {
       }
       setGuidingQuestion(data.question);
       setResponse(data);
+      setConversation(data.conversation || []);
       setStage("guided");
     } catch {
       setError("Network error while asking the question.");
@@ -76,6 +90,7 @@ export default function AskPage() {
 
   const submitAnswer = async () => {
     if (!studentAnswer.trim()) return;
+    const submittedAnswer = studentAnswer.trim();
     setLoading(true);
     setError("");
 
@@ -88,7 +103,8 @@ export default function AskPage() {
           age,
           mode: "answer",
           guidingQuestion,
-          studentAnswer,
+          studentAnswer: submittedAnswer,
+          conversation,
         }),
       });
       const data = await res.json();
@@ -97,6 +113,9 @@ export default function AskPage() {
         return;
       }
       setResponse(data);
+      setConversation(data.conversation || []);
+      setLastStudentAnswer(submittedAnswer);
+      setStudentAnswer("");
       setStage("answer");
     } catch {
       setError("Network error while submitting the answer.");
@@ -119,8 +138,9 @@ export default function AskPage() {
           age,
           mode: "explanation",
           guidingQuestion,
-          studentAnswer,
+          studentAnswer: lastStudentAnswer,
           explanation,
+          conversation,
         }),
       });
       const data = await res.json();
@@ -129,7 +149,8 @@ export default function AskPage() {
         return;
       }
       setResponse(data);
-      setStage("done");
+      setConversation(data.conversation || []);
+      setStage(data.retry ? "answer" : "done");
     } catch {
       setError("Network error while submitting the explanation.");
     } finally {
@@ -196,6 +217,27 @@ export default function AskPage() {
             </div>
           )}
 
+          {conversation.length > 0 && (
+            <section className="mt-8 border-t border-slate-200 pt-6" aria-label="Conversation history">
+              <h2 className="text-lg font-semibold text-slate-900">Conversation</h2>
+              <div className="mt-4 space-y-3">
+                {conversation.map((turn, index) => (
+                  <div
+                    key={`${turn.role}-${index}`}
+                    className={`rounded-2xl p-4 ${
+                      turn.role === "child" ? "ml-8 bg-indigo-50 text-indigo-950" : "mr-8 bg-slate-50 text-slate-800"
+                    }`}
+                  >
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      {turn.role === "child" ? "Child" : "AmigosNest"}
+                    </p>
+                    <p className="mt-1 whitespace-pre-wrap">{turn.content}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
           {(stage !== "ask" || error) && (
             <div className="mt-8 space-y-6">
               {error && (
@@ -205,19 +247,9 @@ export default function AskPage() {
               )}
 
               {guidingQuestion && stage !== "ask" && (
-                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6">
-                  <h2 className="text-xl font-semibold text-slate-900">Guiding Question</h2>
-                  <p className="mt-3 text-slate-700">{guidingQuestion}</p>
-                  {stage === "guided" ? (
-                    <p className="mt-3 text-sm text-slate-500">
-                      This is step 1 of the Socratic flow. Answer it first, and then the app will give you feedback and a second prompt.
-                    </p>
-                  ) : (
-                    <p className="mt-3 text-sm text-slate-500">
-                      Hint level: {response?.hintLevel || 1}
-                    </p>
-                  )}
-                </div>
+                <p className="mt-6 text-sm text-slate-500">
+                  Hint level: {response?.hintLevel || 1}
+                </p>
               )}
 
               {stage === "guided" && (
@@ -240,12 +272,30 @@ export default function AskPage() {
                 </div>
               )}
 
-              {stage === "answer" && response && (
+              {stage === "answer" && response?.continueLearning && (
                 <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-6 shadow-sm">
-                  <h2 className="text-lg font-semibold text-slate-900">Feedback</h2>
-                  <p className="mt-3 text-slate-800">{response.feedback}</p>
-                  <p className="mt-4 text-sm text-slate-600">Next: {response.nextPrompt || "How did you know?"}</p>
+                  <h2 className="text-lg font-semibold text-slate-900">Keep thinking</h2>
+                  <p className="mt-3 whitespace-pre-line text-slate-700">{response.nextPrompt}</p>
+                  <textarea
+                    value={studentAnswer}
+                    onChange={(e) => setStudentAnswer(e.target.value)}
+                    rows={4}
+                    className="mt-4 w-full rounded-3xl border border-slate-200 p-4 text-slate-800 focus:border-indigo-400 focus:outline-none"
+                    placeholder="Tell me what you think in your own words."
+                  />
+                  <button
+                    onClick={submitAnswer}
+                    disabled={loading || !studentAnswer.trim()}
+                    className="mt-4 inline-flex items-center justify-center rounded-3xl bg-emerald-600 px-6 py-3 text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                  >
+                    {loading ? "Thinking..." : "Try again"}
+                  </button>
+                </div>
+              )}
 
+              {stage === "answer" && response && !response.continueLearning && (
+                <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-6 shadow-sm">
+                  <h2 className="text-lg font-semibold text-slate-900">Explain your thinking</h2>
                   <div className="mt-6">
                     <textarea
                       value={explanation}
@@ -267,10 +317,9 @@ export default function AskPage() {
 
               {stage === "done" && response && (
                 <div className="rounded-[28px] border border-slate-200 bg-emerald-50 p-6 shadow-sm">
-                  <h2 className="text-lg font-semibold text-slate-900">Explanation Feedback</h2>
-                  <p className="mt-3 text-slate-800">{response.feedback}</p>
-                  <p className="mt-2 text-slate-600">Score: {response.score ?? 0}/100</p>
-                  <p className="mt-4 text-slate-700">{response.finalPrompt}</p>
+                  <h2 className="text-lg font-semibold text-slate-900">Conversation complete</h2>
+                  <p className="mt-3 text-slate-600">Explanation score: {response.score ?? 0}/100</p>
+                  <p className="mt-3 text-slate-700">Your explanation and AmigosNest feedback are above.</p>
                   <button
                     onClick={reset}
                     className="mt-6 inline-flex items-center justify-center rounded-3xl bg-indigo-600 px-6 py-3 text-white transition hover:bg-indigo-700"
