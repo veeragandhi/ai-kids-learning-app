@@ -37,11 +37,23 @@ export default function ParentPage() {
     loadDocuments();
   }, []);
 
+  const [reviewJobId, setReviewJobId] =
+    useState<string | null>(null);
+
+  const [reviewText, setReviewText] =
+    useState("");
+
+  const [reviewSource, setReviewSource] =
+    useState("");
+
   const uploadFile = async () => {
     if (!file) return;
 
     setLoading(true);
     setMessage("");
+    setReviewJobId(null);
+    setReviewText("");
+    setReviewSource("");
 
     const formData = new FormData();
 
@@ -53,6 +65,19 @@ export default function ParentPage() {
         body: formData,
       });
       const data = await res.json();
+
+      // 202 + needsReview: scanned worksheet staged for parent preview.
+      // Nothing was embedded yet — parent must approve below.
+      if (res.status === 202 && data.needsReview) {
+        setReviewJobId(data.jobId || null);
+        setReviewText(data.preview || "");
+        setReviewSource(data.ocrSource || "ocr");
+        setMessage(
+          data.message ||
+            "This looks like a scanned worksheet — please review the text, then approve."
+        );
+        return;
+      }
 
       if (!res.ok) {
         throw new Error(data.error || "Upload failed");
@@ -67,6 +92,41 @@ export default function ParentPage() {
           : error instanceof Error
             ? error.message
             : "Upload failed. Please try again."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const approveReview =
+    async () => {
+
+    if (!reviewJobId) return;
+
+    setLoading(true);
+
+    try {
+      const res = await fetch("/api/upload/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: reviewJobId, editedText: reviewText }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Approval failed");
+      }
+
+      setMessage(data.message || "Approved");
+      setReviewJobId(null);
+      setReviewText("");
+      setReviewSource("");
+      await loadDocuments();
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Approval failed. Please try again."
       );
     } finally {
       setLoading(false);
@@ -148,7 +208,7 @@ export default function ParentPage() {
           className="bg-purple-500 text-white px-6 py-3 rounded-full shadow hover:bg-purple-600 transition"
         >
           {loading
-            ? "✨ Preparing AI learning memory..."
+            ? "✨ Preparing AI learning memory... (scanned pages can take a minute)"
             : "🚀 Upload Document"}
         </button>
 
@@ -159,6 +219,32 @@ export default function ParentPage() {
             <p className="text-gray-700">
               {message}
             </p>
+          </div>
+        )}
+
+        {reviewJobId && (
+          <div className="mt-6 bg-amber-50 border border-amber-200 rounded-2xl p-4">
+            <h3 className="text-lg font-bold text-gray-800">
+              🔍 Review extracted text ({reviewSource})
+            </h3>
+            <p className="text-gray-600 text-sm mt-1">
+              Nothing is saved yet. Fix mistakes below, then approve — or
+              upload a clearer file instead.
+            </p>
+            <textarea
+              value={reviewText}
+              onChange={(e) => setReviewText(e.target.value)}
+              rows={12}
+              aria-label="Review extracted worksheet text"
+              className="mt-3 w-full rounded-xl border border-amber-300 p-3 text-sm text-gray-800"
+            />
+            <button
+              onClick={approveReview}
+              disabled={loading || !reviewText.trim()}
+              className="mt-3 bg-green-500 text-white px-6 py-2 rounded-full shadow hover:bg-green-600 transition disabled:opacity-50"
+            >
+              {loading ? "Saving..." : "✅ Looks correct — add to library"}
+            </button>
           </div>
         )}
       </div>
