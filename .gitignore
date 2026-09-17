@@ -39,3 +39,25 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local-only learning data (never publish kids' material)
+# Everything a parent uploads stays on this device. Only the synthetic
+# sample docs used by `npm run evaluate:ask` are tracked.
+/uploads/*
+!/uploads/animals.txt
+!/uploads/dinosaurs.txt
+!/uploads/plants.txt
+
+# generated vector store (embeds uploaded material -> local only)
+/embeddings/vectors.json
+
+# local OCR spike artifacts + reports
+/artifacts/
+
+# OCR language data (tesseract.js fetches it on demand)
+*.traineddata
+
+# local dev logs
+dev-ocr.log
+dev-*.log
+server.log
