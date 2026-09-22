@@ -224,9 +224,18 @@ function isTooSimilarToOriginal(generatedQuestion: string, originalQuestion: str
   return jaccard >= 0.85 || (startsWithYesNoWord && generatedTokens.length <= 8);
 }
 
+function isMalformedGuidingQuestion(text: string) {
+  return /\b(?:about|on)\s+(?:think|thinking|the lesson|the question|the answer)\b/i.test(text);
+}
+
 const VAGUE_LIST_WORDS = new Set([
   "several", "thing", "things", "well", "different", "job", "jobs", "way", "ways",
   "rest", "own", "help", "helps", "also",
+]);
+
+const ASK_META_WORDS = new Set([
+  "think", "thinking", "lesson", "detail", "question", "answer", "clue", "useful",
+  "discover", "imagine", "remember", "idea", "ideas", "about",
 ]);
 
 function extractListItems(text: string) {
@@ -253,9 +262,25 @@ function extractListItems(text: string) {
   return lists;
 }
 
+function answerConceptTokens(text: string) {
+  const aliases: Record<string, string> = {
+    breathe: "breath",
+    breathing: "breath",
+    breathed: "breath",
+    sound: "sound",
+    sounds: "sound",
+    use: "use",
+    uses: "use",
+    used: "use",
+    using: "use",
+  };
+
+  return contentTokens(text).map((token) => aliases[token] || token);
+}
+
 function listItemMatched(studentAnswer: string, item: string) {
-  const answerTokens = new Set(contentTokens(studentAnswer));
-  const itemTokens = contentTokens(item).filter((token) => !VAGUE_LIST_WORDS.has(token));
+  const answerTokens = new Set(answerConceptTokens(studentAnswer));
+  const itemTokens = answerConceptTokens(item).filter((token) => !VAGUE_LIST_WORDS.has(token));
   return itemTokens.length > 0 && itemTokens.every((token) => answerTokens.has(token));
 }
 
@@ -287,25 +312,28 @@ function bestFactList(context: string, question: string) {
 }
 
 function pickClueTerm(context: string, question: string) {
-  const questionTokens = contentTokens(question);
+  const questionTokens = contentTokens(question).filter((token) => !ASK_META_WORDS.has(token));
   const contextTokenList = contentTokens(context);
-  const shared = questionTokens.find((token) => contextTokenList.includes(token));
-  if (shared) return shared;
+  const shared = [...questionTokens].reverse().find((token) => contextTokenList.includes(token));
+  // Return the original word from the context, not the stemmed token
+  // (so the child sees "breathing", never "breath").
+  if (shared) return findOriginalWord(context, shared);
 
-  const fact = bestFactList(context, question)[0];
+  const fact = bestFactList(context, question)
+    .flatMap((item) => contentTokens(item).filter((token) => !ASK_META_WORDS.has(token)));
   if (fact) {
-    const token = contentTokens(fact)[0];
-    if (token) return token;
+    return findOriginalWord(context, fact[0]);
   }
 
-  return contextTokenList[0] || "this";
+  const fallback = contextTokenList.find((token) => !ASK_META_WORDS.has(token)) || "this";
+  return findOriginalWord(context, fallback);
 }
 
 function pickEvidenceTerm(context: string, question: string) {
   const fact = bestFactList(context, question)[0];
   if (fact) {
     const token = contentTokens(fact).find((item) => item.length > 2);
-    if (token) return token;
+    if (token) return findOriginalWord(context, token);
   }
   return pickClueTerm(context, question);
 }
@@ -326,14 +354,14 @@ function buildContextGuidingQuestion(
   const evidence = pickEvidenceTerm(context, question);
 
   if (questionType === "creative") {
-    return `Invent your own example about ${topic} that uses a clue like ${evidence} from the lesson.`;
+    return `Can you invent your own example about ${topic} using the clue "${evidence}" from the lesson?`;
   }
 
   if (topic === evidence) {
-    return `What did the lesson say about ${topic}?`;
+    return `What does the lesson say about ${topic}?`;
   }
 
-  return `What did the lesson say about ${topic} and ${evidence}?`;
+  return `What clue does the lesson give about ${topic}? Look for the part about ${evidence}.`;
 }
 
 function relevantContextTokens(context: string, question: string) {
@@ -419,24 +447,44 @@ function extractContentAfterUncertainty(text: string): string {
   
   return "";
 }
+function joinListGrammar(items: string[]): string {
+  const cleaned = items.map((item) => item.trim()).filter(Boolean);
+  if (cleaned.length === 0) return "";
+  if (cleaned.length === 1) return cleaned[0];
+  if (cleaned.length === 2) return `${cleaned[0]} and ${cleaned[1]}`;
+  return `${cleaned.slice(0, -1).join(", ")}, and ${cleaned[cleaned.length - 1]}`;
+}
+
 function buildAnswerSummary(context: string, question: string): string {
-  // Build a summary of the key points from the context to help the child
+  // Build a summary of the key points from this document to help the child.
   const factList = bestFactList(context, question);
-  
+
   if (factList.length > 0) {
-    const formatted = factList.slice(0, 4).join(", ");
-    return `Plants mainly need things like ${formatted}.`;
+    const formatted = joinListGrammar(factList.slice(0, 4));
+    return `Here is what the lesson says: ${formatted}.`;
   }
-  
+
   // Fallback: extract key tokens from the question and context
   const keyTokens = relevantContextTokens(context, question);
   const keyWords = Array.from(keyTokens).slice(0, 5);
-  
+
   if (keyWords.length > 0) {
-    return `From the lesson, ${keyWords.join(", ")} are important for this topic.`;
+    return `From the lesson, the important details are: ${joinListGrammar(keyWords)}.`;
   }
-  
+
   return "Keep exploring the lesson to discover more!";
+}
+
+function buildRemainingDetailsPrompt(context: string, question: string) {
+  const clue = pickClueTerm(context, question);
+  return `What other detail does the lesson give about ${clue}?`;
+}
+
+// A frustrated child explicitly asking for the answer ("I want the answer",
+// "this does not answer my question") should get the graceful summary, not
+// another round of grading as a misconception.
+function isExplicitAnswerRequest(text: string) {
+  return /\b(i want (the )?answer|just tell me|tell me (the answer|now|please)|give me the answer|this does (not|n.t) answer|you('re| are) not answering|that is why i am asking you|why am i asking you)\b/i.test(text);
 }
 
 
@@ -488,11 +536,24 @@ function gradeStudentAnswer(context: string, question: string, studentAnswer: st
     };
   }
 
+  // Frustrated escalation ("I want the answer", "this does not answer my
+  // question"): stop grading and give the graceful grounded summary instead
+  // of calling it a misconception.
+  if (isExplicitAnswerRequest(studentAnswer)) {
+    const summary = buildAnswerSummary(context, question);
+    return {
+      responseState: "don't_remember" as const,
+      correctness: "partial" as const,
+      feedback: `That is fair — let me share what the lesson says. ${summary}`,
+      nextPrompt: "Want to try another question from the lesson?",
+    };
+  }
+
   if (isOffTopicAnswer(context, question, studentAnswer)) {
     return {
       responseState: "off_topic" as const,
       correctness: "incorrect" as const,
-      feedback: "That idea is not what the lesson is about. Let's look for the right information.",
+      feedback: "Good try! That idea is not in the lesson though. Let's look for what the lesson does say.",
       nextPrompt: "What did the lesson say about your question?",
     };
   }
@@ -518,6 +579,21 @@ function gradeStudentAnswer(context: string, question: string, studentAnswer: st
     }
 
     if (matched.length === 0) {
+      const supportedFactItems = factList.filter((item) => {
+        const itemTokens = answerConceptTokens(item).filter((token) => !VAGUE_LIST_WORDS.has(token));
+        const normalizedAnswerTokens = answerConceptTokens(studentAnswer);
+        return itemTokens.length > 0 && itemTokens.some((token) => normalizedAnswerTokens.includes(token));
+      });
+
+      if (supportedFactItems.length > 0) {
+        return {
+          responseState: "partially_correct" as const,
+          correctness: "partial" as const,
+          feedback: `Good memory. The lesson does say ${supportedFactItems[0]}.`,
+          nextPrompt: buildRemainingDetailsPrompt(context, question),
+        };
+      }
+
       return {
         responseState: "misconception" as const,
         correctness: "incorrect" as const,
@@ -543,7 +619,7 @@ function gradeStudentAnswer(context: string, question: string, studentAnswer: st
       responseState: "partially_correct" as const,
       correctness: "partial" as const,
       feedback: matched.length > 0 ? "Good memory. That is one thing the lesson said." : "You found a useful clue.",
-      nextPrompt: `What else did the lesson say about ${allMatched[allMatched.length - 1] || "that"}?`,
+      nextPrompt: buildRemainingDetailsPrompt(context, question),
     };
   }
 
@@ -784,10 +860,12 @@ export async function POST(req: Request) {
     const recentAnswers = previousAnswers.slice(-3);
     const recentUncertainCount = recentAnswers.filter((ans) => isUncertainAnswer(ans)).length;
     const totalUncertain = recentUncertainCount + 1;
-    const shouldEnd = 
+    const shouldEnd =
       graded.responseState === "correct_and_explained" ||
       graded.responseState === "correct_but_no_reasoning" ||
-      (graded.responseState === "don't_remember" && totalUncertain >= 2);
+      (graded.responseState === "don't_remember" && totalUncertain >= 2) ||
+      // Explicit "just tell me" escalation already received the summary.
+      (graded.responseState === "don't_remember" && isExplicitAnswerRequest(studentAnswer));
     const continueLearning = !shouldEnd;
     return NextResponse.json(withConversation(body, [`${graded.feedback}\n\n${graded.nextPrompt}`], {
       type: "evaluation",
@@ -866,6 +944,7 @@ export async function POST(req: Request) {
       extractedQuestion &&
       looksLikeEnglishText(extractedQuestion) &&
       !isTooSimilarToOriginal(extractedQuestion, question) &&
+      !isMalformedGuidingQuestion(extractedQuestion) &&
       contentTokens(extractedQuestion).includes(evidenceTerm);
 
     return NextResponse.json(withConversation(body, [extractedUsable ? extractedQuestion : contextAwareQuestion], {
@@ -882,6 +961,7 @@ export async function POST(req: Request) {
   const modelQuestionUsable =
     questionText &&
     !isTooSimilarToOriginal(questionText, question) &&
+    !isMalformedGuidingQuestion(questionText) &&
     contentTokens(questionText).includes(evidenceTerm);
 
   return NextResponse.json(withConversation(body, [modelQuestionUsable ? questionText : contextAwareQuestion], {

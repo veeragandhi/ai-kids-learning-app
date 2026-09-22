@@ -12,7 +12,7 @@ Read `lib/ocr.ts`, `lib/retrieval.ts`, `lib/ai.ts` before touching ingestion/ret
 
 * Next.js (Turbopack) + React + TypeScript (strict)
 * Tailwind CSS
-* Ollama (local inference) — `gemma3:1b` generation, `nomic-embed-text` embeddings, `gemma3:4b` selective vision fallback
+* Ollama (local inference) — `gemma3:1b` generation, `nomic-embed-text` embeddings, `gemma3:4b` selective vision fallback (all env-overridable: `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `OLLAMA_EMBED_MODEL`, `OLLAMA_VISION_MODEL` — see `.env.example`)
 * Local vector store (`embeddings/vectors.json`)
 * pdf2json for text layer, Tesseract fast-pass OCR, pdf-image JPEG extraction (no pdf-parse — DOMMatrix issues)
 

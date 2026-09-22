@@ -17,11 +17,14 @@ function chunkText(text, chunkSize = 500, overlap = 100) {
   return chunks;
 }
 
+const OLLAMA_BASE_URL = (process.env.OLLAMA_BASE_URL || "http://localhost:11434").replace(/\/+$/, "");
+const OLLAMA_EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "nomic-embed-text";
+
 async function createEmbedding(text) {
-  const response = await fetch("http://localhost:11434/api/embeddings", {
+  const response = await fetch(`${OLLAMA_BASE_URL}/api/embeddings`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "nomic-embed-text", prompt: text }),
+    body: JSON.stringify({ model: OLLAMA_EMBED_MODEL, prompt: text }),
   });
   if (!response.ok) {
     throw new Error(`Embedding failed: ${response.status} ${response.statusText}`);

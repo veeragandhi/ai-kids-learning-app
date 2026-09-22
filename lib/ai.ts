@@ -1,15 +1,38 @@
+// Ollama connection is env-configurable so the app can run against a beefier
+// machine (e.g. Mac with a bigger model) while developing elsewhere.
+//   OLLAMA_BASE_URL    default http://localhost:11434
+//   OLLAMA_MODEL       generation model, default gemma3:1b
+//   OLLAMA_EMBED_MODEL embedding model, default nomic-embed-text
+//   OLLAMA_VISION_MODEL vision model, default gemma3:4b
+export function ollamaBaseUrl(): string {
+  return (process.env.OLLAMA_BASE_URL || "http://localhost:11434").replace(/\/+$/, "");
+}
+
+export function ollamaGenModel(): string {
+  return process.env.OLLAMA_MODEL || "gemma3:1b";
+}
+
+export function ollamaEmbedModel(): string {
+  return process.env.OLLAMA_EMBED_MODEL || "nomic-embed-text";
+}
+
+export function ollamaVisionModel(): string {
+  return process.env.OLLAMA_VISION_MODEL || "gemma3:4b";
+}
+
 export async function generateAnswer(prompt: string, numPredict: number = 300, temperature = 0.2) {
   const startTime = Date.now();
-  console.log("[ai] Calling Ollama LLM...");
-  
+  const model = ollamaGenModel();
+  console.log(`[ai] Calling Ollama LLM (${model})...`);
+
   try {
-    const res = await fetch("http://localhost:11434/api/generate", {
+    const res = await fetch(`${ollamaBaseUrl()}/api/generate`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "gemma3:1b",
+        model,
         prompt,
         stream: false,
         temperature,
@@ -38,16 +61,16 @@ export async function generateAnswer(prompt: string, numPredict: number = 300, t
 
 export async function* generateAnswerStream(prompt: string, numPredict: number = 2000) {
   const startTime = Date.now();
-  console.log("[ai] Calling Ollama LLM (streaming)...");
-  
+  console.log(`[ai] Calling Ollama LLM (streaming, ${ollamaGenModel()})...`);
+
   try {
-    const res = await fetch("http://localhost:11434/api/generate", {
+    const res = await fetch(`${ollamaBaseUrl()}/api/generate`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "gemma3:1b",
+        model: ollamaGenModel(),
         prompt,
         stream: true,
         temperature: 0.2,

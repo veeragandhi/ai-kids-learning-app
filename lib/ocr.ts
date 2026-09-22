@@ -11,6 +11,7 @@
 
 import { createWorker } from "tesseract.js";
 import path from "path";
+import { ollamaBaseUrl, ollamaVisionModel } from "./ai";
 
 export const BLANK_MARKER = "[BLANK]";
 
@@ -282,14 +283,14 @@ const VISION_PROMPT =
 
 export async function visionTranscribeImage(
   image: Buffer,
-  model = "gemma3:4b",
+  model = ollamaVisionModel(),
   timeoutMs = 180000
 ): Promise<string> {
   const b64 = image.toString("base64");
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const res = await fetch("http://localhost:11434/api/generate", {
+    const res = await fetch(`${ollamaBaseUrl()}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: ctrl.signal,

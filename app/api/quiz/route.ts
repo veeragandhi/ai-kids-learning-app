@@ -38,6 +38,39 @@ function echoScore(question: string, options: string[]): number {
   return max;
 }
 
+// Score how well a question+answer pair is grounded in the retrieved context.
+// Returns 0..1; low means the question is likely hallucinated.
+function quizGroundingScore(question: string, options: string[], answer: string, context: string): number {
+  if (!context) return 0;
+  const qTokens = new Set(quizContentWords(question));
+  const aTokens = new Set(quizContentWords(answer));
+  const oTokens = new Set(
+    options.flatMap((option) => quizContentWords(option))
+  );
+  const contextTokens = new Set(quizContentWords(context));
+  if (contextTokens.size === 0) return 0;
+
+  const allTopicTokens = new Set<string>([...qTokens, ...aTokens, ...oTokens]);
+  const hits = [...allTopicTokens].filter((token) => contextTokens.has(token)).length;
+  return hits / Math.max(1, allTopicTokens.size);
+}
+
+// Reject a quiz where the question/answer pair does not look grounded in the
+// retrieved context (catches the "ask about African elephant when lesson does
+// not mention elephants" failure mode).
+function quizGroundedInContext(quiz: unknown, context: string): boolean {
+  if (!Array.isArray(quiz) || quiz.length === 0) return false;
+  return quiz.every((entry) => {
+    const q = entry as { options?: unknown; answer?: unknown; question?: unknown };
+    const options = Array.isArray(q?.options)
+      ? q.options.filter((opt): opt is string => typeof opt === "string")
+      : [];
+    const answer = typeof q?.answer === "string" ? q.answer : String(q?.answer ?? "");
+    const question = typeof q?.question === "string" ? q.question : String(q?.question ?? "");
+    return quizGroundingScore(question, options, answer, context) >= 0.35;
+  });
+}
+
 // Pick the option best supported by the retrieved context: find the
 // context sentence closest to the question, then the option closest to
 // that sentence. Synonym-aware so "big" matches "large", etc.
@@ -341,6 +374,54 @@ function extractFirstJsonArray(text: string) {
   return null;
 }
 
+function hasQuizVariety(quiz: any): boolean {
+  if (!Array.isArray(quiz) || quiz.length < 2) return true;
+
+  const normalizedQuestions = quiz.map((item) =>
+    String(item?.question || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9 ]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+  );
+  if (new Set(normalizedQuestions).size !== normalizedQuestions.length) {
+    console.error("[quiz] Rejected repeated question stems");
+    return false;
+  }
+
+  if (quiz.some((item) => {
+    const question = String(item?.question || "").trim();
+    return /\bwhy is\b.*\b(?:helps|uses|has|have|does|are)\b/i.test(question)
+      || /\bhow does\b.*\b(?:is|are|was|were|has|have)\b/i.test(question);
+  })) {
+    console.error("[quiz] Rejected grammatically malformed question stem");
+    return false;
+  }
+
+  const optionSets = quiz.map((item) =>
+    Array.isArray(item?.options)
+      ? item.options.map((option: unknown) => String(option).toLowerCase().trim()).sort().join("|")
+      : ""
+  );
+  if (new Set(optionSets).size !== optionSets.length) {
+    console.error("[quiz] Rejected repeated option sets");
+    return false;
+  }
+
+  const questionWords = quiz.map((item) => new Set(quizContentWords(item.question)));
+  for (let i = 0; i < questionWords.length; i++) {
+    for (let j = i + 1; j < questionWords.length; j++) {
+      const shared = [...questionWords[i]].filter((word) => questionWords[j].has(word));
+      const smaller = Math.min(questionWords[i].size, questionWords[j].size);
+      if (smaller > 0 && shared.length / smaller >= 0.8) {
+        console.error("[quiz] Rejected near-duplicate question stems");
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 function repairQuizJson(raw: string) {
   let cleaned = raw
     .replace(/```json/g, "")
@@ -589,10 +670,11 @@ Use CLEAR vocabulary appropriate for age ${age}:
    ✗ DON'T: "¿Qué tipo..." (Spanish)
    ✓ DO: "What type..." (English only)
 
-2. CONTENT SOURCE: Use ONLY information from the provided CONTEXT.
+2. CONTENT SOURCE: Use ONLY information from the provided CONTEXT below.
    ✗ DON'T: Add facts from outside knowledge
    ✗ DON'T: Hallucinate information
-   ✓ DO: Base every question on the CONTEXT provided
+   ✗ DON'T: Ask about a sub-topic the CONTEXT does NOT mention
+   ✓ DO: Base every question AND every option on the CONTEXT provided
 
 3. QUESTIONS MUST BE QUESTIONS, NOT STATEMENTS:
    ✗ BAD: "A family makes a home" (statement)
@@ -615,8 +697,11 @@ Use CLEAR vocabulary appropriate for age ${age}:
 8. Use vocabulary appropriate for age ${age}
 ${vocabularyGuidance}
 
-Invalid response:
+ Invalid response:
 ${raw}
+
+CONTEXT (your only source of facts — every question and answer must come from it):
+${context}
 
 Examples of GOOD questions:
 ✗ "Which describes a family?" + options: [one child, one or two children, many children] - all are valid!
@@ -692,27 +777,44 @@ function isValidQuizQuestion(question: any): boolean {
 }
 
 function buildContextFallbackQuiz(context: string, topic: string, count: number) {
-  // Deterministic grounded fallback: build simple questions from real lesson
-  // sentences so we NEVER return meta junk like "What is the main subject?".
+  // Use different lesson facts and question shapes when model JSON cannot be parsed.
   const safeTopic = typeof topic === "string" && topic.trim() ? topic.trim().replace(/"/g, "'") : "this topic";
   const sentences = context
     .replace(/\s+/g, " ")
     .split(/(?<=[.!?])\s+/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 25 && s.length < 220 && /[a-zA-Z]{3,}/.test(s));
-  const unique = [...new Set(sentences)].slice(0, Math.max(count, 1));
+    .map((s) => s.replace(/^[.#\s]+/, "").replace(/\*\*/g, "").trim())
+    .filter((s) => s.length > 25 && s.length < 220 && /[a-zA-Z]{3,}/.test(s) && !/\?\s*$/.test(s) && !/^all about\b|^think about it$|^amazing fact$|^discover$/i.test(s));
+  const unique = [...new Set(sentences)];
   const quiz: { question: string; options: string[]; answer: string }[] = [];
-  const seen = new Set<string>();
+  const questionTemplates = [
+    (focus: string) => `What does the lesson say about ${focus}?`,
+    (focus: string) => `Which detail does the lesson give about ${focus}?`,
+    (focus: string) => `What fact does the lesson give about ${focus}?`,
+    (focus: string) => `Which fact about ${focus} is in the lesson?`,
+  ];
+  const falseOptionTemplates = [
+    "The lesson does not mention this detail",
+    "This is not a fact from the lesson",
+    "The lesson gives a different detail",
+    "This idea is not explained in the lesson",
+  ];
   for (let i = 0; i < count; i++) {
     const sentence = unique[i % Math.max(unique.length, 1)] || `${safeTopic} is described in the lesson.`;
     const words = sentence.replace(/[.?!,;:()[\]{}"]/g, "").split(/\s+/).filter((w) => w.length > 3);
-    const keyword = [...words].reverse().find((w) => !seen.has(w.toLowerCase())) || words[words.length - 1] || safeTopic;
-    seen.add(keyword.toLowerCase());
-    const question = `According to the lesson, which is true about ${safeTopic}?`;
+    const focus = words
+      .filter((word) => !/^(a|an|the|is|are|was|were|and|or|of|to|in|on)$/i.test(word))
+      .slice(0, 4)
+      .join(" ") || safeTopic;
+    const question = questionTemplates[i % questionTemplates.length](focus);
     const correct = sentence.length <= 110 ? sentence : sentence.slice(0, 107) + "...";
+    const options = [
+      correct,
+      falseOptionTemplates[i % falseOptionTemplates.length],
+      falseOptionTemplates[(i + 1) % falseOptionTemplates.length],
+    ];
     quiz.push({
       question,
-      options: [correct, `Something not stated in the lesson`, `I don't know`],
+      options,
       answer: correct,
     });
   }
@@ -781,8 +883,11 @@ Use CLEAR vocabulary appropriate for age ${age}:
 2. CONTENT SOURCE: Use ONLY information from the provided CONTEXT below.
    ✗ DON'T: Add facts from outside knowledge
    ✗ DON'T: Hallucinate or guess information
-   ✓ DO: Base every question on the CONTEXT text
-   ✗ DON'T: Ask about things not mentioned in the CONTEXT
+   ✗ DON'T: Ask about a sub-topic that the CONTEXT does NOT mention
+      (e.g. do not ask about "African elephants" if the CONTEXT only talks
+      about elephants in general)
+   ✓ DO: Base every question AND every option on the CONTEXT text
+   ✓ DO: Use the CONTEXT's own words where you can
 
 3. QUESTIONS MUST BE QUESTIONS, NOT STATEMENTS:
    ✗ BAD: "A family makes a home" (statement)
@@ -791,7 +896,12 @@ Use CLEAR vocabulary appropriate for age ${age}:
    ✓ GOOD: "Why are families important?" (question)
    Questions MUST start with: What, Which, How, Who, Why, When, Where
 
-4. OPTIONS MUST NOT HAVE BRACKETS:
+4. COVERAGE: Every question must test a different fact or idea from the CONTEXT.
+  Do not repeat the same question stem with a different sentence as an option.
+  For this topic, prefer specific details, actions, reasons, and vocabulary from
+  the lesson instead of asking what the lesson is generally about.
+
+5. OPTIONS MUST NOT HAVE BRACKETS:
    ✗ BAD: "(Small family)" or "[Small family]" or "{Small family}"
    ✓ GOOD: "Small family"
    Remove all brackets, parentheses, and braces from options!
@@ -845,6 +955,11 @@ CRITICAL RULES FOR QUESTIONS:
    ✓ GOOD: "Which family has one or two children?" + [Small family, Large family, Single parent household]
    ✗ BAD: "What's a big family like?" + [Small family, Large family, Just a house] (options copied from the other question!)
    ✓ GOOD: "What's a big family like?" + [Has many children, Has no children, Is just a house]
+
+  5c. GRAMMAR: Every question must sound natural when read aloud.
+    Do not combine incompatible forms such as "Why is ... helps" or
+    "How does ... is". Use "Why does ... help?" or "How is ... described?".
+    Do not reuse the exact same three options for multiple questions.
 
 6. Each question must have EXACTLY 3 options (can include "All of the above" as one option).
 7. EXACTLY ONE option is correct.
@@ -1013,25 +1128,25 @@ export async function POST(req: Request) {
   const llmTime = Date.now() - llmStart;
   console.log(`[quiz] LLM generation took ${llmTime}ms`);
 
-  let cleanedQuiz = cleanRawQuiz(quiz);
+  const cleanedQuiz = cleanRawQuiz(quiz);
   let parsed = safeParseQuiz(cleanedQuiz);
 
-  if (!parsed) {
-    console.log("[quiz] first parse failed, retrying with a stricter prompt");
+  if (!parsed || !hasQuizVariety(parsed) || !quizGroundedInContext(parsed, context)) {
+    console.log("[quiz] first response failed parse / variety / grounding, retrying with a stricter prompt");
     const retryPrompt = buildQuizRetryPrompt(quiz, context, topic, age, numQuestions);
     const retryResponse = await generateAnswer(retryPrompt, tokenBudget);
     const retryCleaned = cleanRawQuiz(retryResponse);
     parsed = safeParseQuiz(retryCleaned);
-    if (!parsed) {
-      console.error("[quiz] retry parse also failed", retryCleaned);
+    if (!parsed || !hasQuizVariety(parsed) || !quizGroundedInContext(parsed, context)) {
+      console.error("[quiz] retry parse / grounding also failed", retryCleaned);
       parsed = defaultQuizForTopic(topic, numQuestions, context);
     }
   }
 
   parsed = fixQuizAnswers(fixSwappedQuizOptions(parsed, context));
 
-  if (!validateQuizFormat(parsed, numQuestions)) {
-    console.error("[quiz] Invalid quiz format after fixes:", JSON.stringify(parsed));
+  if (!validateQuizFormat(parsed, numQuestions) || !hasQuizVariety(parsed) || !quizGroundedInContext(parsed, context)) {
+    console.error("[quiz] Invalid quiz format / not grounded after fixes:", JSON.stringify(parsed));
     parsed = defaultQuizForTopic(topic, numQuestions, context);
   }
 

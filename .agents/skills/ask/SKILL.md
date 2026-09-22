@@ -77,7 +77,7 @@ When implementing escalation, keep hint state attached to the question or learni
 
 ### Uncertainty And Graceful Ending
 
-Children legitimately say they do not remember or do not know. `answer` mode must treat these as a learning signal, not as off-topic answers that trigger “That idea is not what the lesson is about.”
+Children legitimately say they do not remember or do not know. `answer` mode must treat these as a learning signal, not as off-topic answers that shut the child down — the `off_topic` feedback leads with encouragement ("Good try! ...") before redirecting to the lesson.
 
 - `isUncertainAnswer(text)` recognizes uncertainty with flexible spelling and phrasing, including `dont`/`don't`/`do not`, misspellings such as `remeber`, `forgot`, `not sure`, `no idea`, and `that's all I remember`.
 - Before grading, `gradeStudentAnswer` checks uncertainty first. If the child's text also contains substantive lesson tokens (filtered by `hasRelevantContextTokens`, which ignores stop/uncertainty words such as `dont`, `remember`, `tell`, `me`), the substantive content is extracted by `extractContentAfterUncertainty` and graded recursively so a correct idea wrapped in uncertainty is not discarded.

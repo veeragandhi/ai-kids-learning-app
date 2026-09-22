@@ -48,8 +48,14 @@ OUTPUT SHAPE (follow exactly):
 - Line 1: a short title of 2-6 words. No numbering, no "Lesson:" prefix.
 - Then: 2 or 3 short paragraphs that teach the idea in your own words.
 
+WRITING RULES:
+- Write 1 to 3 complete sentences per paragraph. Every sentence must end with a period, question mark, or exclamation mark.
+- Use correct English grammar. Subject and verb must agree ("elephants have", not "elephants has").
+- Do not start any line with a number, letter, bullet, or dash.
+- Do not use markdown such as *, #, or numbered lists.
+
 HARD RULES:
-1. Use ONLY the facts in the CONTEXT below. Never add facts from outside it.
+1. Use ONLY the facts in the CONTEXT below. Never add facts from outside it. If the CONTEXT does not contain the answer, say so plainly.
 2. Explain the ideas in YOUR OWN simple words. Do NOT copy sentences from the context word-for-word.
 3. Never copy worksheet parts: no question numbers, no "Tick/Match/Fill/Circle" instructions, no answer options like "(a / b)", no checkbox marks.
 4. Never write HTML or markup such as <br>, and never write ${BLANK_MARKER} or [ ].
@@ -77,27 +83,76 @@ function cleanLessonText(raw: string): string {
     .replace(/\*\*/g, "")
     .replace(/^\s*LESSON\s*:\s*/i, "")
     .replace(/^\s*Lesson\s*:\s*/i, "");
-  const kept = out
+  const lines = out
     .split("\n")
     .map((line) => line.replace(/[ \t]+/g, " ").trim())
+    .map((line) => stripMetaPrefix(line))
     .filter((line) => {
       if (!line) return true;
+      // Worksheet scaffolding: numbered option lines like "1. (a / b)".
       if (/^\d+\s*[.)]\s/.test(line) && /\([^()\n]{1,60}\/[^()\n]{1,60}\)/.test(line)) {
         return false;
       }
       if (/^\d{1,3}$/.test(line)) return false;
       return true;
+    })
+    .map((line) => stripLinePrefix(line))
+    .filter((line, index, arr) => {
+      // Drop a line that became empty after stripping, but keep paragraph breaks.
+      if (line) return true;
+      // Keep at most one blank line in a row.
+      return index === 0 || arr[index - 1] !== "";
     });
-  const cleaned = kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  const withPunctuation = lines.map((line, index) =>
+    index === 0 ? line : ensureSentencePunctuation(line),
+  );
+  const joined = withPunctuation.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 
   // A lesson must not ask questions (that is the Ask flow's job). Drop trailing
   // question chatter such as "Would you like to learn more?" from the end only,
   // and never shorten the lesson below teaching size.
-  const withoutTail = cleaned.replace(/(?:\n+[^\n?]*\?)+\s*$/, "").trim();
+  const withoutTail = joined.replace(/(?:\n+[^\n?]*\?)+\s*$/, "").trim();
   if (withoutTail && withoutTail.split(/\s+/).length >= 20) {
     return withoutTail;
   }
-  return cleaned;
+  return joined;
+}
+
+// Strip meta labels the small model narrates about its own output
+// ("Title:", "A short title:", "Read carefully:", "Introduction:").
+function stripMetaPrefix(line: string): string {
+  if (!line) return line;
+  return line
+    .replace(/^\s*(?:a\s+short\s+title|short\s+title|title|topic|read\s+carefully|introduction|intro|note)\s*:\s+/i, "")
+    .trim();
+}
+
+// Strip leading list prefixes that the small model sometimes emits ("1.", "2)",
+// "- ", "* ", "• ", "Line 1:"). Keep the line content.
+function stripLinePrefix(line: string): string {
+  if (!line) return line;
+  // Apply repeatedly: the model stacks prefixes ("1. Line 2:", "- 3. text").
+  let stripped = line;
+  for (let i = 0; i < 3; i++) {
+    const next = stripped
+      // "Line 1:", "line 2 -", "Step 1:" style prefixes kids reported seeing.
+      .replace(/^\s*(?:line|step|point|para(?:graph)?)\s*\d{1,3}\s*[:.)\-–—]?\s+/i, "")
+      // "1. " or "1) " — must be followed by a letter so we don't strip years.
+      .replace(/^\s*\d{1,3}\s*[.)]\s+(?=[A-Za-z])/, "")
+      // "- " / "* " / "• " bullets
+      .replace(/^\s*[-*•]\s+(?=[A-Za-z])/, "");
+    if (next === stripped) break;
+    stripped = next;
+  }
+  return stripped.trim();
+}
+
+// Make sure each non-empty body line ends with punctuation. The small model
+// often forgets the final period, which hurts grammar and read-aloud rhythm.
+function ensureSentencePunctuation(line: string): string {
+  if (!line) return line;
+  if (/[.!?:"")]$/.test(line)) return line;
+  return `${line}.`;
 }
 
 export async function POST(req: Request) {

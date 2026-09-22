@@ -559,7 +559,7 @@ export default function ClientLesson() {
                   </h2>
                   <p className="mt-2 text-red-700">{error}</p>
                   <p className="mt-4 text-sm text-red-600">
-                    Make sure Ollama is running with the gemma3:1b model.
+                    Make sure Ollama is running with the configured model (see OLLAMA_MODEL in .env.example).
                   </p>
                   <button
                     onClick={generateLesson}

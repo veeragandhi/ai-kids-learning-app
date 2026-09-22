@@ -16,6 +16,8 @@
 //   return response.data[0].embedding;
 // }
 
+import { ollamaBaseUrl, ollamaEmbedModel } from "./ai";
+
 export async function createEmbedding(
   text: string
 ): Promise<number[]> {
@@ -23,14 +25,14 @@ export async function createEmbedding(
   console.log("[embeddings] Creating embedding for:", text.substring(0, 50) + "...");
 
   const response = await fetch(
-    "http://localhost:11434/api/embeddings",
+    `${ollamaBaseUrl()}/api/embeddings`,
     {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "nomic-embed-text",
+        model: ollamaEmbedModel(),
         prompt: text,
       }),
     }

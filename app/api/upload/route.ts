@@ -14,13 +14,15 @@ import {
 } from "@/lib/ocr";
 import { createOcrJob, type OcrSource } from "@/lib/ocr-jobs";
 import { finalizeDocumentText } from "@/lib/ingest";
+import { ollamaVisionModel } from "@/lib/ai";
 
 // P-1: hard cap on upload size to avoid buffering huge files into memory
 const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20MB
 
 // Vision slow-pass budget: gemma3:4b took ~219s/page on CPU in the spike.
+// Model is env-configurable (OLLAMA_VISION_MODEL) for beefier machines.
 const VISION_TIMEOUT_MS = 180000;
-const VISION_MODEL = "gemma3:4b";
+const VISION_MODEL = ollamaVisionModel();
 
 type OcrOutcome =
   | { kind: "text"; text: string; source: OcrSource; detail: string }
