@@ -18,7 +18,7 @@ const fixturesDir = path.join(root, ".agents", "skills", "ask", "fixtures");
 const uploadsDir = path.join(root, "uploads");
 const metadataPath = path.join(uploadsDir, "documents.json");
 
-const SAMPLES = ["plants.txt", "animals.txt", "dinosaurs.txt"];
+const SAMPLES = ["plants.txt", "animals.txt", "dinosaurs.txt", "elephants.txt"];
 
 async function exists(target) {
   try {
