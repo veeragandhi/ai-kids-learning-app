@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { generateAnswer } from "@/lib/ai";
-import { cleanRetrievalQuery, contentTokens, getRelevantContext } from "@/lib/retrieval";
+import { cleanRetrievalQuery, contentTokens, getRelevantContext, stemWord } from "@/lib/retrieval";
 import { OCR_MARKER_GUARD } from "@/lib/ocr";
 
 type AskRequest = {
@@ -12,6 +12,11 @@ type AskRequest = {
   explanation?: string;
   guidingQuestion?: string;
   conversation?: ConversationTurn[];
+  // Lesson-linked Ask: the displayed lesson is the child's actual learning
+  // context. source === "lesson" makes lessonText the primary (and only)
+  // grounding context. Omitted/"standalone" keeps document retrieval.
+  source?: "lesson" | "standalone";
+  lessonText?: string;
 };
 
 type ConversationTurn = {
@@ -34,6 +39,10 @@ type AnswerGrade = {
   correctness: "correct" | "partial" | "incorrect";
   feedback: string;
   nextPrompt: string;
+  // Set when the exchange should end gracefully even though the child was
+  // not merely uncertain (unanswerable question, repeated prompt, explicit
+  // escalation). The handler maps this to continueLearning: false.
+  graceful?: boolean;
 };
 
 function conversationTurns(body: AskRequest) {
@@ -250,7 +259,7 @@ function extractListItems(text: string) {
     for (const match of text.matchAll(pattern)) {
       const parts = match[1]
         .split(/,|;|\/|\band\b|\bor\b/i)
-        .map((part) => part.replace(/[^a-zA-Z0-9\s]/g, " ").trim())
+        .map((part) => cleanFactPhrase(part))
         .filter((part) => {
           const tokens = contentTokens(part).filter((token) => !VAGUE_LIST_WORDS.has(token));
           return tokens.length > 0;
@@ -262,11 +271,29 @@ function extractListItems(text: string) {
   return lists;
 }
 
+// List fragments are interpolated into child-facing feedback and summaries,
+// so they must read cleanly: strip bullets, "X to:" lead-ins left over from
+// captures like "their trunks to: * Smell food", and stray spacing/case.
+// (Fixes "The lesson does say their trunks to    Smell food.")
+function cleanFactPhrase(part: string): string {
+  let out = String(part || "")
+    .replace(/[*•\-–—]+/g, " ")
+    .replace(/^\s*(?:their|its|his|her|our)\s+\w+\s+to\s*:\s*/i, "")
+    .replace(/^\s*\w+\s+to\s*:\s*/i, "")
+    .replace(/[^a-zA-Z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (/^[A-Z]/.test(out)) out = out.charAt(0).toLowerCase() + out.slice(1);
+  return out;
+}
+
 function answerConceptTokens(text: string) {
   const aliases: Record<string, string> = {
     breathe: "breath",
     breathing: "breath",
     breathed: "breath",
+    african: "africa",
+    asian: "asia",
     sound: "sound",
     sounds: "sound",
     use: "use",
@@ -301,14 +328,42 @@ function bestFactList(context: string, question: string) {
     return lists.sort((a, b) => b.length - a.length)[0];
   };
 
+  // Relevance gate: a sentence below the best sentence-level overlap may
+  // only supply the fact list through a shared NON-generic query token.
+  // Measured on the dino query ("Why did Stegosaurus live before T. rex?",
+  // tokens [stegosauru, live, before, rex], best sentence overlap 2): the
+  // off-topic "Some animals live in forests" (sole shared token "live")
+  // won after the correct overlap-2 dinosaur sentences failed the list
+  // pattern match. But the same below-best position carries the legitimate
+  // trunk-uses list for "Why don't humans have trunks?" (sole shared token
+  // "trunk"), and for the answerable trunk query (overlap 3 vs best 4 via
+  // "its"/"their" stemming) — so a pure overlap cutoff in either direction
+  // breaks one of the two. The measured difference is the token itself:
+  // generic verbs ("live", "have", ...) cross topics freely, while a
+  // distinctive noun ("trunk") keeps the evidence on-topic. The ungated
+  // whole-context fallback had the same hole (it returned "forests" when
+  // the loop found nothing), so it returns [] instead — callers already
+  // fall back to the shared-token clue ("rex") or a key-token summary.
+  const GENERIC_EVIDENCE_SKIP = new Set([
+    ...ANSWERABILITY_VERB_SKIP,
+    "live", "liv", "like", "lik",
+  ]);
+  const bestOverlap = ranked.length > 0 ? ranked[0].overlap : 0;
+  const minOverlap = Math.max(1, bestOverlap - 1);
   for (const item of ranked) {
-    if (item.overlap === 0) continue;
+    if (item.overlap === 0 || item.overlap < minOverlap) continue;
+    if (item.overlap < bestOverlap) {
+      const shared = contentTokens(item.sentence).filter(
+        (token) => questionTokens.has(token) && !GENERIC_EVIDENCE_SKIP.has(token),
+      );
+      if (shared.length === 0) continue;
+    }
     const window = sentences.slice(item.index, item.index + 2).join(" ");
     const list = pickLongest(window);
     if (list.length > 0) return list;
   }
 
-  return pickLongest(context);
+  return [];
 }
 
 function pickClueTerm(context: string, question: string) {
@@ -321,7 +376,7 @@ function pickClueTerm(context: string, question: string) {
 
   const fact = bestFactList(context, question)
     .flatMap((item) => contentTokens(item).filter((token) => !ASK_META_WORDS.has(token)));
-  if (fact) {
+  if (fact.length > 0) {
     return findOriginalWord(context, fact[0]);
   }
 
@@ -384,6 +439,17 @@ function isOffTopicAnswer(context: string, question: string, studentAnswer: stri
   }
 
   if (supportedTokens.length >= 2) {
+    return false;
+  }
+
+  // A wrong candidate that names the question's own subject ("plants need
+  // rocks") is an attempted answer (misconception), not a topic change.
+  // Only answers sharing nothing with the question ("fish..." for a plants
+  // question) count as off-topic.
+  const substantiveQuestion = new Set(
+    [...questionTokens].filter((token) => token.length >= 4),
+  );
+  if (answerTokens.some((token) => substantiveQuestion.has(token))) {
     return false;
   }
 
@@ -480,16 +546,222 @@ function buildRemainingDetailsPrompt(context: string, question: string) {
   return `What other detail does the lesson give about ${clue}?`;
 }
 
+// Asking "what other detail?" verbatim forever feels robotic and is what
+// frustrated the trunk conversation. The second time a partial answer would
+// repeat the same prompt, end gracefully with a grounded summary instead.
+function remainingDetailsOrSummary(
+  context: string,
+  question: string,
+  previousAssistant: string[],
+): { nextPrompt: string; gracefulSummary: string | null } {
+  if (previousAssistant.filter((turn) => turn.includes("What other detail")).length >= 2) {
+    return { nextPrompt: GRACEFUL_END_PROMPT, gracefulSummary: buildAnswerSummary(context, question) };
+  }
+  return { nextPrompt: buildRemainingDetailsPrompt(context, question), gracefulSummary: null };
+}
+
+function gracefulPartialEnd(summary: string): AnswerGrade {
+  return {
+    responseState: "don't_remember" as const,
+    correctness: "partial" as const,
+    feedback: `Great try thinking about it! ${summary}`,
+    nextPrompt: GRACEFUL_END_PROMPT,
+    graceful: true,
+  };
+}
+
 // A frustrated child explicitly asking for the answer ("I want the answer",
 // "this does not answer my question") should get the graceful summary, not
 // another round of grading as a misconception.
 function isExplicitAnswerRequest(text: string) {
-  return /\b(i want (the )?answer|just tell me|tell me (the answer|now|please)|give me the answer|this does (not|n.t) answer|you('re| are) not answering|that is why i am asking you|why am i asking you)\b/i.test(text);
+  return /\b(i want (the )?answer|just tell me|tell me (the answer|now|please)|give me the answer|this does (not|n.t) answer|you('re| are) not (answering|listening)|i don'?t like this|not related to|answer my question|not what i asked|that'?s not what i asked)\b/i.test(text);
+}
+
+// Words that carry no entity meaning for answerability checks.
+const ANSWERABILITY_VERB_SKIP = new Set([
+  "have", "has", "had", "hav", "having",
+  "make", "makes", "made", "making",
+  "take", "takes", "took", "taking",
+  "get", "gets", "got", "getting",
+  "give", "gives", "gave", "giving",
+  "go", "goes", "went", "going",
+  "come", "comes", "came", "coming",
+  "do", "does", "did", "don",
+  "is", "are", "was", "were", "be",
+  "can", "could", "will", "would", "should",
+]);
+
+// Entities lessons never cover: a question about one of these is
+// unanswerable from any lesson that never mentions it ("why don't humans
+// have trunks?" with an elephants-only lesson).
+const ABSENT_ENTITY_WORDS = new Set([
+  "human", "humans", "person", "people", "mankind",
+]);
+
+const CONTENT_VERB_STEMS = new Set([
+  "have", "live", "eat", "drink", "grow", "make", "take", "get",
+  "give", "go", "come", "sleep", "fly", "swim", "run", "walk",
+  "breathe", "breath", "use", "need", "pick", "smell", "touch",
+]);
+
+// Returns the missing entity word when the child's question asks about
+// something the retrieved context never mentions, else null. Narrow by
+// design: only fires for (a) absent-entity words (humans/people), or
+// (b) why/how-come + negation about a subject-position entity that is
+// missing ("why don't birds have trunks?"). A missing object
+// ("why does Stegosaurus have plates?") stays answerable so the child can
+// still explore what the lesson DOES say about the subject.
+function unanswerableEntityFromContext(context: string, question: string): string | null {
+  const contextSet = new Set(contentTokens(context));
+  const substantive = contentTokens(question).filter(
+    (token) =>
+      token.length >= 4 &&
+      !ANSWERABILITY_VERB_SKIP.has(token) &&
+      !ASK_META_WORDS.has(token) &&
+      !VAGUE_LIST_WORDS.has(token),
+  );
+  const missing = substantive.filter((token) => !contextSet.has(token));
+  if (missing.length === 0) return null;
+
+  const absentEntity = missing.find((token) => ABSENT_ENTITY_WORDS.has(token));
+  if (absentEntity) return absentEntity;
+
+  const text = String(question || "");
+  const isWhy = /^\s*why\b/i.test(text) || /\bhow come\b/i.test(text);
+  const negated = /\b(don'?t|doesn'?t|didn'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|couldn'?t|not|never)\b/i.test(text);
+  if (!isWhy || !negated) return null;
+
+  // Subject test: the missing entity comes before the main content verb
+  // ("humans ... have ... trunks" -> subject; "Stegosaurus ... have ...
+  // plates" -> plates is the object, so it stays answerable).
+  const rawWords = (text.toLowerCase().match(/[a-z]+/g) || []).map(stemWord);
+  const verbIdx = rawWords.findIndex((word) => CONTENT_VERB_STEMS.has(word));
+  const firstMissing = rawWords.findIndex((word) => missing.includes(word));
+  if (firstMissing !== -1 && (verbIdx === -1 || firstMissing < verbIdx)) {
+    return rawWords[firstMissing];
+  }
+  return null;
+}
+
+// Lesson-linked Ask: is the child's question covered by the DISPLAYED
+// lesson at all? Strict token check, not similarity: anything beyond the
+// lesson's own words is honestly unknown ("I don't know based on this
+// lesson"). Standalone document Q&A never uses this gate.
+function questionCoveredByLesson(lessonText: string, question: string): boolean {
+  const lessonSet = new Set(contentTokens(lessonText));
+  const substantive = contentTokens(question).filter(
+    (token) =>
+      token.length >= 4 &&
+      !ANSWERABILITY_VERB_SKIP.has(token) &&
+      !ASK_META_WORDS.has(token) &&
+      !VAGUE_LIST_WORDS.has(token),
+  );
+  if (substantive.length === 0) return true;
+  return substantive.every((token) => lessonSet.has(token));
 }
 
 
 
-function gradeStudentAnswer(context: string, question: string, studentAnswer: string, previousAnswers: string[]): AnswerGrade {
+const GRACEFUL_END_PROMPT = "Want to try another question from the lesson?";
+
+// Extra-claim guardrails: meta/vague words are never "unsupported extras"
+// ("the text says so" must not flag "text"). Only concrete content words
+// absent from BOTH lesson and question count ("help us to play" -> "play").
+const EXTRA_CLAIM_SKIP = new Set([
+  ...VAGUE_LIST_WORDS,
+  "lesson", "text", "sentence", "page", "book", "story", "picture",
+  "says", "said", "say", "answer", "question", "think", "thought",
+  "know", "remember", "school", "word", "words",
+  "use", "used", "uses", "using",
+  "job", "jobs",
+]);
+
+function unsupportedExtras(context: string, question: string, studentAnswer: string): string[] {
+  const contextSet = new Set(answerConceptTokens(context));
+  const questionSet = new Set(answerConceptTokens(question));
+  const seen = new Set<string>();
+  const extras: string[] = [];
+  for (const word of String(studentAnswer).toLowerCase().match(/[a-z]+/g) || []) {
+    if (word.length < 4 || EXTRA_CLAIM_SKIP.has(word)) continue;
+    const stem = stemWord(word);
+    const concept = answerConceptTokens(word)[0] || stem;
+    if (seen.has(concept)) continue;
+    seen.add(concept);
+    if (!contextSet.has(concept) && !questionSet.has(concept)) extras.push(word);
+  }
+  return extras.slice(0, 2);
+}
+
+function withExtrasNote(feedback: string, extras: string[]): string {
+  if (extras.length === 0) return feedback;
+  const quoted = extras.map((word) => `"${word}"`).join(" and ");
+  return `${feedback} One thing to double-check: the lesson does not mention ${quoted}.`;
+}
+
+// Child's own words whose stems are grounded in the lesson, for naming
+// evidence back without hallucinating ("drinking, smelling" from a
+// paraphrased correct answer). Skips bare topic words; prefers words that
+// match the lesson's fact list so paraphrases surface first ("smelling"
+// over "African").
+function groundedAnswerWords(
+  context: string,
+  question: string,
+  studentAnswer: string,
+  count = 3,
+  preferStems: Set<string> = new Set(),
+): string[] {
+  const relevant = relevantContextTokens(context, question);
+  const topic = new Set([...contentTokens(question)].filter((token) => token.length >= 5));
+  const seen = new Set<string>();
+  const preferred: string[] = [];
+  const rest: string[] = [];
+  for (const word of String(studentAnswer).match(/[A-Za-z]+/g) || []) {
+    if (word.length < 4) continue;
+    const stem = stemWord(word.toLowerCase());
+    if (seen.has(stem) || topic.has(stem) || !relevant.has(stem)) continue;
+    seen.add(stem);
+    (preferStems.has(stem) ? preferred : rest).push(word.toLowerCase());
+  }
+  return [...preferred, ...rest].slice(0, count);
+}
+
+function gradeStudentAnswer(
+  context: string,
+  question: string,
+  studentAnswer: string,
+  previousAnswers: string[],
+  previousAssistant: string[] = [],
+  lessonMode = false,
+): AnswerGrade {
+  // Unanswerable questions come first: when the lesson never mentions what
+  // the child asks about ("why don't humans have trunks?"), say so honestly
+  // instead of grading the restated question against trunk-use facts. This
+  // also affirms a child who correctly notices the lesson is silent.
+  const missingEntity = unanswerableEntityFromContext(context, question);
+  if (missingEntity) {
+    const summary = buildAnswerSummary(context, question);
+    if (lessonMode) {
+      return {
+        responseState: "don't_remember" as const,
+        correctness: "partial" as const,
+        feedback:
+          `You noticed something important — I don't know based on this lesson. ` +
+          `This lesson never talks about ${missingEntity}. ${summary}`,
+        nextPrompt: GRACEFUL_END_PROMPT,
+        graceful: true,
+      };
+    }
+    return {
+      responseState: "don't_remember" as const,
+      correctness: "partial" as const,
+      feedback:
+        `You're right to wonder about ${missingEntity}, but I don't know — that is not in the text. ` +
+        `The lesson never talks about ${missingEntity}. ${summary}`,
+      nextPrompt: GRACEFUL_END_PROMPT,
+      graceful: true,
+    };
+  }
+
   // Check for uncertainty responses - be flexible about what follows "don't remember/know"
   const hasUncertainty = isUncertainAnswer(studentAnswer);
   const normalizedAnswer = normalizeForComparison(studentAnswer);
@@ -531,7 +803,7 @@ function gradeStudentAnswer(context: string, question: string, studentAnswer: st
     return {
       responseState: "don't_remember" as const,
       correctness: "partial" as const,
-      feedback: "That is okay. You do not need to remember the exact words. Let's use a clue from the lesson to find the answer together.",
+      feedback: `That is okay. You do not need to remember the exact words. Look for the part about ${pickEvidenceTerm(context, question)} in the lesson to find a clue.`,
       nextPrompt: "What clue can you find in the lesson about this?",
     };
   }
@@ -549,11 +821,24 @@ function gradeStudentAnswer(context: string, question: string, studentAnswer: st
     };
   }
 
-  if (isOffTopicAnswer(context, question, studentAnswer)) {
+  // Fact-match lookahead: an answer that fully matches a MULTI-word lesson
+  // fact ("use them to smell food") is an attempted answer with pronouns,
+  // not a topic change — even when it shares no literal word with the
+  // question. Single-word matches ("water" in a fish answer) still go
+  // through the off-topic check below.
+  const earlyFactList = bestFactList(context, question);
+  const earlyMultiMatch = earlyFactList.some((item) => {
+    const itemTokens = answerConceptTokens(item).filter((token) => !VAGUE_LIST_WORDS.has(token));
+    if (itemTokens.length <= 1) return false;
+    const answerSet = new Set(answerConceptTokens(studentAnswer));
+    return itemTokens.every((token) => answerSet.has(token));
+  });
+
+  if (!earlyMultiMatch && isOffTopicAnswer(context, question, studentAnswer)) {
     return {
       responseState: "off_topic" as const,
       correctness: "incorrect" as const,
-      feedback: "Good try! That idea is not in the lesson though. Let's look for what the lesson does say.",
+      feedback: `Good try! That idea is not in the lesson though. The lesson talks about ${pickEvidenceTerm(context, question)} — let's look for what it says.`,
       nextPrompt: "What did the lesson say about your question?",
     };
   }
@@ -567,37 +852,123 @@ function gradeStudentAnswer(context: string, question: string, studentAnswer: st
   const allMatched = factList.filter((item) => listItemMatched(allAnswers.join(" "), item));
 
   if (factList.length > 0) {
-    if (matched.length === 0 && supportedTokens.length === 0) {
+    // Full-lesson coverage: the fact list only spans the top sentence
+    // window, so true facts from other bullets ("pick up grass") share no
+    // list item. When 3+ substantive answer words appear ANYWHERE in the
+    // lesson, treat it as a useful clue, not a misconception.
+    const contextTokenSet = new Set(answerConceptTokens(context));
+    const fullSupported = answerConceptTokens(studentAnswer).filter(
+      (token) => token.length >= 3 && contextTokenSet.has(token),
+    );
+    const extras = unsupportedExtras(context, question, studentAnswer);
+    const factStems = new Set(factList.flatMap((item) => answerConceptTokens(item)));
+    const coveragePartial = (): AnswerGrade | null => {
+      if (fullSupported.length < 2 || isGuess(studentAnswer)) return null;
+      const { nextPrompt, gracefulSummary } = remainingDetailsOrSummary(context, question, previousAssistant);
+      if (gracefulSummary) return gracefulPartialEnd(gracefulSummary);
+      let named = groundedAnswerWords(context, question, studentAnswer, 3, factStems);
+      if (named.length === 0) {
+        // Fall back to the child's own lesson-grounded words (often the
+        // topic words themselves) so feedback still names what was right.
+        const lessonSet = new Set(answerConceptTokens(context));
+        const seen = new Set<string>();
+        const fallback: string[] = [];
+        for (const word of String(studentAnswer).match(/[A-Za-z]+/g) || []) {
+          if (word.length < 4) continue;
+          const concept = answerConceptTokens(word)[0];
+          if (!concept || seen.has(concept)) continue;
+          seen.add(concept);
+          if (lessonSet.has(concept)) {
+            fallback.push(word.toLowerCase());
+            if (fallback.length >= 2) break;
+          }
+        }
+        named = fallback;
+      }
       return {
-        responseState: isGuess(studentAnswer) ? "guessing" as const : "misconception" as const,
-        correctness: "incorrect" as const,
-        feedback: isGuess(studentAnswer)
-          ? "A guess is a useful start. What makes you think that? Look for a lesson detail to support your idea."
-          : "Let's test that idea against the lesson. What does the lesson say?",
-        nextPrompt: "What detail from the lesson supports your thinking?",
+        responseState: "partially_correct" as const,
+        correctness: "partial" as const,
+        feedback: withExtrasNote(
+          named.length > 0
+            ? `You found a useful clue from the lesson — ${joinListGrammar(named)}.`
+            : "You found a useful clue from the lesson.",
+          extras,
+        ),
+        nextPrompt,
       };
-    }
+    };
 
     if (matched.length === 0) {
+      // Paraphrased correct answers ("breathing, smelling, drinking" for a
+      // trunk-uses list) share no full list item but cover the lesson in
+      // their own words. Recognize strong token coverage as correct while
+      // tolerating at most one unmatched word (a synonym like "grasping").
+      // Two or more invented extras ("play games") stay partial.
+      if (
+        !isGuess(studentAnswer) &&
+        answerTokens.length > 5 &&
+        supportedTokens.length >= Math.max(4, Math.ceil(answerTokens.length * 0.5)) &&
+        extras.length <= 1
+      ) {
+        const named = groundedAnswerWords(context, question, studentAnswer, 3, factStems);
+        return {
+          responseState: hasReasoning(studentAnswer) ? "correct_and_explained" as const : "correct_but_no_reasoning" as const,
+          correctness: "correct" as const,
+          feedback: hasReasoning(studentAnswer)
+            ? `Exactly. You found details like ${joinListGrammar(named)} from the lesson and explained them in your own words.`
+            : `Exactly. You found details like ${joinListGrammar(named)} from the lesson. How do you know?`,
+          nextPrompt: hasReasoning(studentAnswer) ? "Can you explain it another way?" : "How do you know?",
+        };
+      }
+      if (supportedTokens.length === 0) {
+        // True lesson facts outside the top-window fact list still deserve
+        // partial credit rather than a misconception label.
+        const coverage = coveragePartial();
+        if (coverage) return coverage;
+        return {
+          responseState: isGuess(studentAnswer) ? "guessing" as const : "misconception" as const,
+          correctness: "incorrect" as const,
+          feedback: isGuess(studentAnswer)
+            ? "A guess is a useful start. What makes you think that? Look for a lesson detail to support your idea."
+            : `Let's test that idea against the lesson. Look at what it says about ${pickEvidenceTerm(context, question)}.`,
+          nextPrompt: "What detail from the lesson supports your thinking?",
+        };
+      }
+
       const supportedFactItems = factList.filter((item) => {
         const itemTokens = answerConceptTokens(item).filter((token) => !VAGUE_LIST_WORDS.has(token));
-        const normalizedAnswerTokens = answerConceptTokens(studentAnswer);
-        return itemTokens.length > 0 && itemTokens.some((token) => normalizedAnswerTokens.includes(token));
+        const normalizedAnswerTokens = new Set(answerConceptTokens(studentAnswer));
+        const shared = itemTokens.filter((token) => normalizedAnswerTokens.has(token));
+        // A single repeated word ("trunk") is not evidence of recall. Require
+        // at least two shared substantive tokens, or the whole item when the
+        // item itself is a single substantive token ("water").
+        if (itemTokens.length <= 1) return shared.length >= 1;
+        return shared.length >= 2;
       });
 
       if (supportedFactItems.length > 0) {
+        const { nextPrompt, gracefulSummary } = remainingDetailsOrSummary(context, question, previousAssistant);
+        if (gracefulSummary) return gracefulPartialEnd(gracefulSummary);
         return {
           responseState: "partially_correct" as const,
           correctness: "partial" as const,
-          feedback: `Good memory. The lesson does say ${supportedFactItems[0]}.`,
-          nextPrompt: buildRemainingDetailsPrompt(context, question),
+          feedback: withExtrasNote(
+            `Good memory — I see "${supportedFactItems[0]}" from the lesson in your answer.`,
+            extras,
+          ),
+          nextPrompt,
         };
       }
+
+      // No list item matched, but broad lesson coverage still earns a
+      // useful-clue partial instead of a misconception label.
+      const coverage = coveragePartial();
+      if (coverage) return coverage;
 
       return {
         responseState: "misconception" as const,
         correctness: "incorrect" as const,
-        feedback: "That answer does not match the lesson yet. Let's look at what the lesson says.",
+        feedback: `That answer does not match the lesson yet. Look at what the lesson says about ${pickEvidenceTerm(context, question)}.`,
         nextPrompt: "What detail from the lesson can help us?",
       };
     }
@@ -605,21 +976,41 @@ function gradeStudentAnswer(context: string, question: string, studentAnswer: st
     const complete = allMatched.length === factList.length || (factList.length >= 3 && allMatched.length >= 3);
 
     if (complete) {
+      const named = joinListGrammar(allMatched.slice(0, 4));
       return {
         responseState: hasReasoning(studentAnswer) ? "correct_and_explained" as const : "correct_but_no_reasoning" as const,
         correctness: "correct" as const,
         feedback: hasReasoning(studentAnswer)
-          ? "Exactly. You found the important uses and explained them in your own words."
-          : "Exactly. You found the important uses. How do you know?",
+          ? `Exactly. You named ${named} and explained them in your own words.`
+          : `Exactly. You named ${named}.`,
         nextPrompt: hasReasoning(studentAnswer) ? "Can you explain it another way?" : "How do you know?",
       };
     }
 
+    // Very short answers that nail a fact item ("Water.") are correct, not
+    // partial — invite the evidence next. Counts real words, so a full
+    // sentence like "Plants need water." still earns its partial step.
+    if (String(studentAnswer).trim().split(/\s+/).length <= 2) {
+      const named = joinListGrammar(matched.slice(0, 2));
+      return {
+        responseState: "correct_but_no_reasoning" as const,
+        correctness: "correct" as const,
+        feedback: `Exactly. You named ${named}.`,
+        nextPrompt: "How do you know?",
+      };
+    }
+
+    const { nextPrompt, gracefulSummary } = remainingDetailsOrSummary(context, question, previousAssistant);
+    if (gracefulSummary) return gracefulPartialEnd(gracefulSummary);
+
     return {
       responseState: "partially_correct" as const,
       correctness: "partial" as const,
-      feedback: matched.length > 0 ? "Good memory. That is one thing the lesson said." : "You found a useful clue.",
-      nextPrompt: buildRemainingDetailsPrompt(context, question),
+      feedback: withExtrasNote(
+        `Good memory. You named ${joinListGrammar(matched.slice(0, 3))} from the lesson.`,
+        unsupportedExtras(context, question, studentAnswer),
+      ),
+      nextPrompt,
     };
   }
 
@@ -682,9 +1073,35 @@ function gradeExplanation(
 
   const score = overlap.length >= 2 && citesLesson ? 80 : overlap.length >= 1 && citesLesson ? 70 : overlap.length >= 2 ? 65 : 45;
 
+  // Name the grounded words back so the child sees WHICH evidence landed
+  // (and so the response carries grounding signals, not generic praise).
+  // Numbers count as evidence ("68"); filler words never do ("that").
+  const EVIDENCE_WORD_SKIP = new Set([
+    "that", "this", "these", "those", "with", "from", "have", "has", "had",
+    "were", "was", "are", "when", "where", "which", "who", "there", "their",
+    "them", "then", "than", "such", "some", "other", "same", "into", "over",
+    "about", "before", "after", "while", "both", "each", "more", "most",
+    "only", "very", "just", "also", "even", "still",
+  ]);
+  const seenOverlap = new Set<string>();
+  const evidenceWords: string[] = [];
+  for (const word of String(explanation).match(/[A-Za-z0-9]+/g) || []) {
+    const lower = word.toLowerCase();
+    if (lower.length < 2 || EVIDENCE_WORD_SKIP.has(lower)) continue;
+    const stem = stemWord(lower);
+    if (seenOverlap.has(stem)) continue;
+    seenOverlap.add(stem);
+    if (contentTokens(word).some((token) => overlap.includes(token))) {
+      evidenceWords.push(lower);
+      if (evidenceWords.length >= 3) break;
+    }
+  }
+
   return {
     score,
-    feedback: "You used evidence from the lesson to explain your thinking.",
+    feedback: evidenceWords.length > 0
+      ? `You used evidence from the lesson — ${evidenceWords.join(", ")} — to explain your thinking. To make it stronger, say what the lesson tells us about ${clue}.`
+      : `You shared an idea. Point to one detail from the lesson about ${clue} to support it.`,
     finalPrompt: "Which lesson detail helped you decide?",
   };
 }
@@ -815,11 +1232,61 @@ export async function POST(req: Request) {
   }
 
   const retrievalStart = Date.now();
-  const context = await getRelevantContext(cleanRetrievalQuery(question || studentAnswer || explanation));
-  const retrievalTime = Date.now() - retrievalStart;
+  // Lesson-linked Ask: the DISPLAYED lesson is the only grounding context.
+  // Retrieval is skipped entirely so untaught document facts can never leak
+  // into clues, feedback, or summaries. Standalone mode is unchanged.
+  const lessonMode = body.source === "lesson";
+  const lessonText =
+    typeof body.lessonText === "string" ? body.lessonText.trim().slice(0, 2000) : "";
+  let context: string;
+  let retrievalTime: number;
+  if (lessonMode) {
+    context = lessonText;
+    retrievalTime = Date.now() - retrievalStart;
+    console.log(`[ask] lesson mode, lessonText length: ${lessonText.length}`);
+  } else {
+    context = await getRelevantContext(cleanRetrievalQuery(question || studentAnswer || explanation));
+    retrievalTime = Date.now() - retrievalStart;
+  }
 
   if (!context || context.trim().length === 0) {
     const totalTime = Date.now() - startTime;
+    if (lessonMode) {
+      // Lesson-linked but nothing to ground on: be honest in the schema the
+      // caller expects, without retrieving document facts to fill the gap.
+      const honest = "I don't know based on this lesson. Please open the lesson first, then ask about what it teaches.";
+      if (mode === "answer") {
+        return NextResponse.json(withConversation(body, [honest], {
+          type: "evaluation",
+          responseState: "don't_remember" as const,
+          correctness: "partial" as const,
+          feedback: honest,
+          nextPrompt: GRACEFUL_END_PROMPT,
+          continueLearning: false,
+          hintLevel: 3,
+          source: "Document",
+          _timing: { totalTime, retrievalTime },
+        }), { status: 200 });
+      }
+      if (mode === "explanation") {
+        return NextResponse.json(withConversation(body, [honest], {
+          type: "explanationFeedback",
+          score: 0,
+          feedback: honest,
+          finalPrompt: "What does your lesson teach?",
+          source: "Document",
+          _timing: { totalTime, retrievalTime },
+        }), { status: 200 });
+      }
+      return NextResponse.json(
+        withConversation(body, [honest], {
+          answer: honest,
+          source: "Document",
+          _timing: { totalTime, retrievalTime },
+        }),
+        { status: 200 }
+      );
+    }
     return NextResponse.json(
       withConversation(body, ["I don't know. Please ask a parent to add more information."], {
         answer: "I don't know. Please ask a parent to add more information.",
@@ -830,9 +1297,52 @@ export async function POST(req: Request) {
     );
   }
 
+  // Honest handling for questions the lesson cannot answer ("why don't
+  // humans have trunks?"). Without this gate the flow asks the child to hunt
+  // for trunk-use clues to a question the lesson never addresses, which is
+  // what frustrated the trunk conversation.
+  if (mode === "question") {
+    // Lesson-linked: anything beyond the displayed lesson's own words is
+    // honestly unknown. Never reach into the document for more.
+    if (lessonMode && !questionCoveredByLesson(context, question)) {
+      const totalTime = Date.now() - startTime;
+      const summary = buildAnswerSummary(context, question);
+      const honest =
+        `I don't know based on this lesson. ` +
+        `${summary} Want to explore what the lesson does say?`;
+      return NextResponse.json(
+        withConversation(body, [honest], {
+          answer: honest,
+          source: "Document",
+          _timing: { totalTime, retrievalTime },
+        }),
+        { status: 200 },
+      );
+    }
+    const missingEntity = unanswerableEntityFromContext(context, question);
+    if (missingEntity) {
+      const totalTime = Date.now() - startTime;
+      const summary = buildAnswerSummary(context, question);
+      const honest =
+        `I don't know about ${missingEntity} — that is not in the text. ` +
+        `${summary} Want to explore what the lesson does say?`;
+      return NextResponse.json(
+        withConversation(body, [honest], {
+          answer: honest,
+          source: "Document",
+          _timing: { totalTime, retrievalTime },
+        }),
+        { status: 200 },
+      );
+    }
+  }
+
   if (mode === "answer") {
     const previousAnswers = Array.isArray(body.conversation)
       ? body.conversation.filter((turn) => turn.role === "child").map((turn) => turn.content)
+      : [];
+    const previousAssistant = Array.isArray(body.conversation)
+      ? body.conversation.filter((turn) => turn.role === "assistant").map((turn) => turn.content)
       : [];
     
     console.log(`[answer] question: "${question}" context preview: "${context.substring(0, 100)}..."`);
@@ -853,7 +1363,7 @@ export async function POST(req: Request) {
       }), { status: 200 });
     }
     
-    const graded = gradeStudentAnswer(context, question, studentAnswer, previousAnswers);
+    const graded = gradeStudentAnswer(context, question, studentAnswer, previousAnswers, previousAssistant, lessonMode);
     const totalTime = Date.now() - startTime;
     // Don't keep the conversation going if the child is unable to recall content
     // after multiple attempts, or if the child is correct.
@@ -863,6 +1373,7 @@ export async function POST(req: Request) {
     const shouldEnd =
       graded.responseState === "correct_and_explained" ||
       graded.responseState === "correct_but_no_reasoning" ||
+      graded.graceful === true ||
       (graded.responseState === "don't_remember" && totalUncertain >= 2) ||
       // Explicit "just tell me" escalation already received the summary.
       (graded.responseState === "don't_remember" && isExplicitAnswerRequest(studentAnswer));

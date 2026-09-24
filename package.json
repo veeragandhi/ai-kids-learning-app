@@ -8,7 +8,13 @@
     "start": "next start",
     "lint": "eslint",
     "evaluate:ask": "node .agents/skills/ask/scripts/evaluate-ask.mjs",
-    "seed:samples": "node scripts/seed-sample-docs.mjs"
+    "evaluate:lesson": "node scripts/evaluate-lesson.mjs",
+    "seed:samples": "node scripts/seed-sample-docs.mjs",
+    "video:social": "node scripts/social-video/render.mjs",
+    "video:social:stills": "node scripts/social-video/render.mjs --stills",
+    "video:social:timeline": "node scripts/social-video/render.mjs --timeline-only",
+    "video:social:shots": "node scripts/social-video/assemble-shots.mjs",
+    "video:social:capture": "node scripts/social-video/capture-shots.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.16.0",

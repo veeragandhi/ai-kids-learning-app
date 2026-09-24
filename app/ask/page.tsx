@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 type AskStage = "ask" | "guided" | "answer" | "done";
 
@@ -28,9 +29,25 @@ type ConversationTurn = {
 };
 
 export default function AskPage() {
+  return (
+    <Suspense fallback={<div />}>
+      <AskInner />
+    </Suspense>
+  );
+}
+
+function AskInner() {
+  const searchParams = useSearchParams();
   const [stage, setStage] = useState<AskStage>("ask");
   const [question, setQuestion] = useState("");
-  const [age, setAge] = useState(8);
+  // URL params are readable during render (Suspense boundary above), so
+  // initialize from them directly instead of syncing in an effect.
+  const [age, setAge] = useState(() => {
+    const ageParam = Number(searchParams.get("age"));
+    return Number.isFinite(ageParam) && ageParam >= 3 && ageParam <= 18
+      ? Math.floor(ageParam)
+      : 8;
+  });
   const [questionType, setQuestionType] = useState<"guided" | "creative">("guided");
   const [guidingQuestion, setGuidingQuestion] = useState("");
   const [studentAnswer, setStudentAnswer] = useState("");
@@ -40,6 +57,34 @@ export default function AskPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [conversation, setConversation] = useState<ConversationTurn[]>([]);
+  // Lesson-linked Ask: when arriving from /lesson, the displayed lesson is
+  // the grounding context (same sessionStorage handoff as Quiz).
+  const [{ lessonTopic, lessonText }] = useState(() => {
+    if (searchParams.get("source") !== "lesson") return { lessonTopic: "", lessonText: "" };
+    const topic = searchParams.get("topic") || "";
+    try {
+      const raw = sessionStorage.getItem("lastLesson");
+      if (raw) {
+        const last = JSON.parse(raw);
+        if (
+          last &&
+          typeof last.lesson === "string" &&
+          typeof last.topic === "string" &&
+          (!topic || last.topic.trim().toLowerCase() === topic.trim().toLowerCase())
+        ) {
+          return { lessonTopic: last.topic, lessonText: last.lesson.slice(0, 2000) };
+        }
+      }
+    } catch {
+      // storage unavailable: fall back to standalone document Q&A
+    }
+    return { lessonTopic: "", lessonText: "" };
+  });
+
+  const lessonSourcePayload =
+    lessonText && lessonTopic
+      ? { source: "lesson" as const, lessonText }
+      : { source: "standalone" as const };
 
   const reset = () => {
     setStage("ask");
@@ -61,11 +106,18 @@ export default function AskPage() {
       const res = await fetch("/api/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, age, mode: "question", questionType, conversation }),
+        body: JSON.stringify({ question, age, mode: "question", questionType, conversation, ...lessonSourcePayload }),
       });
       const data = await res.json();
       if (!res.ok || data.error) {
         setError(data.error || "Unable to get a guiding question.");
+        return;
+      }
+      // Honest no-context shape (e.g. the lesson cannot answer the
+      // question): show the message in the conversation and stay here.
+      if (data.answer && !data.question) {
+        setConversation(data.conversation || []);
+        setResponse(data);
         return;
       }
       const isGuidingQuestionResponse =
@@ -105,6 +157,7 @@ export default function AskPage() {
           guidingQuestion,
           studentAnswer: submittedAnswer,
           conversation,
+          ...lessonSourcePayload,
         }),
       });
       const data = await res.json();
@@ -141,6 +194,7 @@ export default function AskPage() {
           studentAnswer: lastStudentAnswer,
           explanation,
           conversation,
+          ...lessonSourcePayload,
         }),
       });
       const data = await res.json();
@@ -167,6 +221,11 @@ export default function AskPage() {
             <p className="mt-2 text-slate-600">
               Ask a question about your uploaded document and follow the Socratic steps.
             </p>
+            {lessonText && lessonTopic && (
+              <p className="mt-3 inline-block rounded-full bg-green-100 px-4 py-2 text-sm font-semibold text-green-700">
+                Asking about your lesson on {lessonTopic} 📚
+              </p>
+            )}
           </div>
 
           {stage === "ask" && (

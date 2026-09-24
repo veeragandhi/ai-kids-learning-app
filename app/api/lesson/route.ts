@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { generateAnswer, generateAnswerStream } from "@/lib/ai";
 import { getRelevantContext } from "@/lib/retrieval";
 import { BLANK_MARKER, OCR_MARKER_GUARD, toTeachingText } from "@/lib/ocr";
+import { conceptCoverage, extractImportantConcepts } from "@/lib/concepts";
 
 // Add OPTIONS for CORS
 export async function OPTIONS(req: Request) {
@@ -31,22 +32,29 @@ function ageGuidance(age: number): string {
   return "Use clear words and some topic vocabulary. Keep sentences to about 15 words. Add one \"why\" or \"how\" detail.";
 }
 
-function lessonWordBudget(age: number): number {
-  if (age <= 6) return 80;
-  if (age <= 9) return 120;
-  return 160;
+// Word budget scales with the amount of important content: a rich worksheet
+// gets room for all its concepts, a simple one stays short. Never a fixed
+// few-sentence cap that would drop concepts.
+function lessonWordBudget(age: number, conceptCount = 0): number {
+  const base = age <= 6 ? 80 : age <= 9 ? 120 : 160;
+  const cap = age <= 6 ? 180 : age <= 9 ? 230 : 280;
+  return Math.min(cap, base + 15 * Math.max(0, conceptCount));
 }
 
-function buildLessonPrompt(context: string, topic: string, age: number) {
+function buildLessonPrompt(context: string, topic: string, age: number, concepts: string[] = []) {
+  const conceptBlock =
+    concepts.length > 0
+      ? `\nIMPORTANT CONCEPTS (cover EVERY one below in your own simple words, one or two short sentences each — do not stop after the first few):\n${concepts.map((c) => `- ${c}`).join("\n")}\n`
+      : "";
   return `You are a friendly teacher writing a mini-lesson for a ${age}-year-old child.
 
 TOPIC: "${topic}"
-LENGTH: at most ${lessonWordBudget(age)} words
+LENGTH: at most ${lessonWordBudget(age, concepts.length)} words
 READING LEVEL: ${ageGuidance(age)}
-
+${conceptBlock}
 OUTPUT SHAPE (follow exactly):
 - Line 1: a short title of 2-6 words. No numbering, no "Lesson:" prefix.
-- Then: 2 or 3 short paragraphs that teach the idea in your own words.
+- Then: short paragraphs that teach the ideas in your own words.
 
 WRITING RULES:
 - Write 1 to 3 complete sentences per paragraph. Every sentence must end with a period, question mark, or exclamation mark.
@@ -60,7 +68,8 @@ HARD RULES:
 3. Never copy worksheet parts: no question numbers, no "Tick/Match/Fill/Circle" instructions, no answer options like "(a / b)", no checkbox marks.
 4. Never write HTML or markup such as <br>, and never write ${BLANK_MARKER} or [ ].
 5. Do not ask the child questions and do not include a quiz or numbered list.
-6. If the CONTEXT has nothing about "${topic}", reply with exactly:
+6. Do not copy worksheet section headers such as "Think About It", "Amazing Fact", or "Discover". Teach every fact as a plain paragraph of its own.
+7. If the CONTEXT has nothing about "${topic}", reply with exactly:
    I don't know. Please ask a parent to add more information.
 
 NOTE: ${OCR_MARKER_GUARD}
@@ -69,6 +78,45 @@ CONTEXT:
 ${context}
 
 Write the lesson about "${topic}" now.
+
+LESSON:`;
+}
+
+// One guided revision when coverage validation finds taught concepts missing
+// from the first draft. Only the missing ideas are added; nothing else may
+// change, and no facts beyond CONTEXT may appear.
+function buildRevisionPrompt(
+  draft: string,
+  missing: string[],
+  topic: string,
+  age: number,
+  context: string,
+) {
+  return `You are a friendly teacher revising a mini-lesson for a ${age}-year-old child.
+
+TOPIC: "${topic}"
+LENGTH: at most ${lessonWordBudget(age, missing.length + 3)} words
+READING LEVEL: ${ageGuidance(age)}
+
+YOUR FIRST DRAFT (keep its style and all its correct content):
+${draft}
+
+MISSING IDEAS (weave EACH one below into the lesson in your own simple words, one short sentence each):
+${missing.map((c) => `- ${c}`).join("\n")}
+
+RULES:
+- Keep the title line and every good sentence of the draft.
+- Add only the missing ideas above. Do NOT add any other facts.
+- Use ONLY facts from the CONTEXT below. Never invent facts.
+- 1 to 3 complete sentences per paragraph. No lists, no markdown, no questions, no quiz.
+- Never write HTML or markup, and never write ${BLANK_MARKER} or [ ].
+
+NOTE: ${OCR_MARKER_GUARD}
+
+CONTEXT:
+${context}
+
+Write the revised lesson about "${topic}" now.
 
 LESSON:`;
 }
@@ -87,6 +135,7 @@ function cleanLessonText(raw: string): string {
     .split("\n")
     .map((line) => line.replace(/[ \t]+/g, " ").trim())
     .map((line) => stripMetaPrefix(line))
+    .map((line) => stripWorksheetSection(line))
     .filter((line) => {
       if (!line) return true;
       // Worksheet scaffolding: numbered option lines like "1. (a / b)".
@@ -94,6 +143,10 @@ function cleanLessonText(raw: string): string {
         return false;
       }
       if (/^\d{1,3}$/.test(line)) return false;
+      // A lesson never asks the child questions (that is the Ask flow's
+      // job): drop "Could it reach something far away?"-style lines
+      // wherever they appear, not just at the tail.
+      if (line.includes("?")) return false;
       return true;
     })
     .map((line) => stripLinePrefix(line))
@@ -116,6 +169,22 @@ function cleanLessonText(raw: string): string {
     return withoutTail;
   }
   return joined;
+}
+
+// Strip worksheet section scaffolding the small model copies from the source
+// ("Thinking About It:", "✨ Amazing Fact: ... ✨"). Standalone labels are
+// dropped; inline labels are unwrapped so the taught fact survives as a
+// plain paragraph.
+function stripWorksheetSection(line: string): string {
+  if (!line) return line;
+  if (/^\W*(thinking about it|think about it|amazing fact|fun fact|did you know|discover|key words?)\W*$/i.test(line)) {
+    return "";
+  }
+  return line
+    .replace(/[✨⭐🌟💡📌🤔]/gu, "")
+    .replace(/^\s*(amazing fact|fun fact|did you know)\s*:\s*/i, "")
+    .replace(/\s+([.!?])/g, "$1")
+    .trim();
 }
 
 // Strip meta labels the small model narrates about its own output
@@ -175,7 +244,9 @@ export async function POST(req: Request) {
     console.log(`[lesson] Generating lesson for topic: ${topic}, age: ${age}, stream: ${stream}`);
 
     const retrievalStart = Date.now();
-    const context = await getRelevantContext(topic);
+    // Broad recall for concept identification (same breadth as Quiz): the
+    // concept list — not raw dump size — decides what enters the lesson.
+    const context = await getRelevantContext(topic, 5, 0.30);
     const retrievalTime = Date.now() - retrievalStart;
     console.log(`[lesson] RAG retrieval took ${retrievalTime}ms`);
 
@@ -198,7 +269,14 @@ export async function POST(req: Request) {
     // Teach from prose, never from the worksheet's exercises. Falls back to the
     // raw context when the text is not a worksheet.
     const teachingContext = toTeachingText(context);
-    const prompt = buildLessonPrompt(teachingContext, topic, age);
+    // Internal concept list: what the child is expected to learn. Never
+    // exposed to the child; it drives the prompt and coverage validation.
+    const conceptStart = Date.now();
+    const concepts = extractImportantConcepts(teachingContext, topic);
+    console.log(`[lesson] identified ${concepts.length} concepts in ${Date.now() - conceptStart}ms`);
+    const prompt = buildLessonPrompt(teachingContext, topic, age, concepts);
+    // Longer lessons need headroom beyond the default prediction budget.
+    const numPredict = concepts.length <= 3 ? 300 : Math.min(800, 150 + 80 * concepts.length);
     
     if (stream) {
       // Return streaming response
@@ -237,7 +315,7 @@ export async function POST(req: Request) {
     const llmStart = Date.now();
     console.log("[lesson] STEP 6 - calling LLM");
     console.log("[lesson] prompt length:", prompt.length);
-    const lesson = await generateAnswer(prompt);
+    const lesson = await generateAnswer(prompt, numPredict);
     const llmTime = Date.now() - llmStart;
     console.log(`[lesson] LLM generation took ${llmTime}ms, response length: ${lesson?.length || 0}`);
 
@@ -271,9 +349,50 @@ export async function POST(req: Request) {
       );
     }
 
+    // Concept coverage validation: revise once when the draft dropped
+    // important concepts. Keep the better-covered version either way.
+    let coverage = conceptCoverage(cleanedLesson, concepts);
+    let revised = false;
+    console.log(`[lesson] concept coverage: ${coverage.covered}/${coverage.total}`);
+    if (concepts.length > 0 && coverage.missing.length > 0) {
+      try {
+        const revisionStart = Date.now();
+        const revision = await generateAnswer(
+          buildRevisionPrompt(cleanedLesson, coverage.missing, topic, age, teachingContext),
+          numPredict,
+        );
+        const revisionTime = Date.now() - revisionStart;
+        console.log(`[lesson] revision took ${revisionTime}ms`);
+        if (revision) {
+          let cleanedRevision = cleanLessonText(revision);
+          if (cleanedRevision.startsWith("I don't know")) {
+            cleanedRevision = cleanedRevision
+              .replace(/^I don't know\.\s+Please ask a parent to add more information\.\n*/, "")
+              .trim();
+          }
+          if (cleanedRevision) {
+            const revisionCoverage = conceptCoverage(cleanedRevision, concepts);
+            console.log(`[lesson] revised coverage: ${revisionCoverage.covered}/${revisionCoverage.total}`);
+            if (revisionCoverage.covered >= coverage.covered) {
+              cleanedLesson = cleanedRevision;
+              coverage = revisionCoverage;
+              revised = true;
+            }
+          }
+        }
+      } catch (revisionError) {
+        console.error("[lesson] revision failed, keeping first draft:", revisionError);
+      }
+    }
+
     const totalTime = Date.now() - startTime;
     console.log(`[lesson] Total time: ${totalTime}ms (retrieval: ${retrievalTime}ms, LLM: ${llmTime}ms)`);
-    return NextResponse.json({ lesson: cleanedLesson, age, _timing: { totalTime, retrievalTime, llmTime } });
+    return NextResponse.json({
+      lesson: cleanedLesson,
+      age,
+      _timing: { totalTime, retrievalTime, llmTime },
+      _coverage: { important: coverage.total, covered: coverage.covered, revised },
+    });
   } catch (error) {
     console.error("[lesson] Fatal error:", error);
     const errorMessage = error instanceof Error ? error.message : "Unknown error";

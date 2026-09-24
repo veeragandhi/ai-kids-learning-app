@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 import {
   ArrowLeft,
   Sparkles,
@@ -21,7 +22,16 @@ type Question = {
 };
 
 export default function QuizPage() {
+  return (
+    <Suspense fallback={<div />}>
+      <QuizInner />
+    </Suspense>
+  );
+}
+
+function QuizInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [topic, setTopic] = useState("");
   const [age, setAge] = useState(5);
@@ -37,6 +47,14 @@ export default function QuizPage() {
   const [score, setScore] = useState(0);
   const [error, setError] = useState("");
   const [loadingText, setLoadingText] = useState("");
+  const [anchored, setAnchored] = useState(false);
+
+  useEffect(() => {
+    const t = searchParams.get("topic");
+    const a = Number(searchParams.get("age"));
+    if (t) setTopic(t);
+    if (Number.isFinite(a) && a >= 3 && a <= 18) setAge(Math.floor(a));
+  }, [searchParams]);
 
   useEffect(() => {
     if (!loading) return;
@@ -69,6 +87,28 @@ export default function QuizPage() {
     setShowResult(false);
     setScore(0);
     setError("");
+    setAnchored(false);
+
+    // Anchor to the most recent displayed lesson so the quiz never tests
+    // facts the child has not read yet (elephant-trunk report).
+    let lessonText = "";
+    try {
+      const raw = sessionStorage.getItem("lastLesson");
+      if (raw) {
+        const last = JSON.parse(raw);
+        if (
+          last &&
+          typeof last.lesson === "string" &&
+          typeof last.topic === "string" &&
+          last.topic.trim().toLowerCase() === topic.trim().toLowerCase()
+        ) {
+          lessonText = last.lesson.slice(0, 2000);
+          setAnchored(true);
+        }
+      }
+    } catch {
+      // ignore storage errors; fall back to retrieval-only quiz
+    }
 
     try {
       const res = await fetch("/api/quiz", {
@@ -76,7 +116,7 @@ export default function QuizPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ topic, age, numQuestions }),
+        body: JSON.stringify({ topic, age, numQuestions, lessonText }),
       });
 
       const data = await res.json();
@@ -418,6 +458,11 @@ export default function QuizPage() {
         {/* Quiz */}
         {quiz.length > 0 && !loading && (
           <div className="mx-auto max-w-4xl">
+            {anchored && (
+              <div className="mb-4 rounded-full bg-green-100 px-4 py-2 text-center text-sm font-semibold text-green-700">
+                Questions are from your last lesson 📚
+              </div>
+            )}
             {/* Progress */}
             <div
               className="

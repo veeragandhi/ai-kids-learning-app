@@ -114,8 +114,22 @@ export async function getRelevantContext(
       );
     });
 
-    const filtered = scored
-      .filter((item) => item.cosine >= minSimilarity && item.lexical > 0)
+// Topic-leakage guard (measured, not tuned by intuition): a chunk that
+// scores clearly below the top chunk is off-topic noise admitted through one
+// generic shared word. Measured gaps on the sample store — dino query leaks
+// animals at hybrid -0.265, generic "meet" leaks elephants at -0.128,
+// single-token "animals" leaks elephants at -0.130 — while no legitimate
+// multi-chunk inclusion anywhere in the eval corpus sits below -0.10.
+// Relative (never a global threshold change: retrieval is shared by
+// lesson/quiz/ask, and absolute floors stay exactly as they were).
+const TOPIC_MARGIN = 0.10;
+
+    const absolute = scored
+      .filter((item) => item.cosine >= minSimilarity && item.lexical > 0);
+
+    const topScore = absolute.length > 0 ? absolute[0].score : 0;
+    const filtered = absolute
+      .filter((item, index) => index === 0 || topScore - item.score < TOPIC_MARGIN)
       .slice(0, topK);
 
     const context = filtered.map((item) => item.text).join("\n");

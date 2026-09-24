@@ -88,7 +88,7 @@ Children legitimately say they do not remember or do not know. `answer` mode mus
 
 ### `answer`
 
-Input: original `question`, `guidingQuestion`, and `studentAnswer`. Output: `type: "evaluation"`, `correctness`, kind `feedback`, exact `nextPrompt: "How did you know?"`, and `hintLevel`. Evaluation must be based only on retrieved context and distinguish correct, partially correct, and incorrect answers.
+Input: original `question`, `guidingQuestion`, and `studentAnswer`. Output: `type: "evaluation"`, `correctness`, kind `feedback`, a mode-specific `nextPrompt`, and `hintLevel`. Evaluation must be based only on retrieved context and distinguish correct, partially correct, and incorrect answers. The follow-up prompt depends on the grade, not a fixed string: correct answers ask `How do you know?`; partial answers ask for the next detail (`What other detail does the lesson give about X?`); misconceptions redirect to a supporting detail; uncertainty gets a clue prompt (`What clue can you find in the lesson about this?`); graceful endings (repeated uncertainty, frustration, unanswerable question) ask `Want to try another question from the lesson?`.
 
 ### `explanation`
 
@@ -119,7 +119,8 @@ Every change must preserve the following invariants unless the product contract 
 - **Useful, non-repetitive questions:** guiding questions must add a useful next thinking step, not repeat the original question, paraphrase it without progress, or ask an unhelpful yes/no question.
 - **Relevant questions:** a guiding question must relate to the child's question and retrieved material. It should prompt noticing, comparing, connecting, or finding evidence.
 - **Supported claims only:** feedback and explanations may affirm or discuss claims supported by retrieved context, not unsupported model knowledge or praise for invented facts.
-- **Honest uncertainty:** when retrieval does not contain the answer, the system must say that information is unavailable or ask for more material. It must not hallucinate an answer.
+- **Honest uncertainty:** when retrieval does not contain the answer, the system must say that information is unavailable or ask for more material. It must not hallucinate an answer. Questions about an entity the retrieved context never mentions (e.g. "why don't humans have trunks?" with only an elephants lesson) are answered honestly in both `question` and `answer` modes — `I don't know about X, that is not in the text`, plus a grounded summary of what the lesson DOES say — never a redirection loop or false praise for repeating a lesson word.
+- **Lesson-linked grounding:** with `source: "lesson"` plus `lessonText`, the displayed lesson is the ONLY grounding context (retrieval is skipped). Grading, clues, and summaries use `lessonText`; questions beyond its words get `I don't know based on this lesson.` Omitted/`"standalone"` keeps document retrieval. The `/lesson` "Ask about this lesson" button and `/ask?source=lesson` pass the lesson via the shared `lastLesson` sessionStorage handoff (same as Quiz).
 - **Correct-answer recognition:** `answer` mode must recognize a correct answer even when it is brief, uses child-friendly wording, or includes extra relevant detail.
 - **Appropriate feedback:** incorrect, partial, uncertain, irrelevant, and correct answers receive distinct, kind, actionable feedback. Feedback should invite evidence and never shame the child or accidentally disclose an answer.
 - **No indefinite loop:** the exchange must not keep asking the same question forever. Repeated uncertainty ("I don't remember") ends gracefully with a short grounded summary and an invitation to move on.
@@ -134,7 +135,7 @@ Every change must preserve the following invariants unless the product contract 
 - The three response types remain stable: `guidingQuestion`, `evaluation`, and `explanationFeedback`.
 - The transitions between `question`, `answer`, and `explanation` remain intact, with compatible request fields and response fields at every step.
 - Guiding questions do not repeat the original question or directly reveal its answer.
-- `answer` always asks `How did you know?` as its next prompt.
+- `answer` follow-ups are grade-specific (correct: `How do you know?`; partial: remaining-detail prompt; misconception: supporting-detail redirect; uncertainty: clue prompt; graceful end: `Want to try another question from the lesson?`). The evaluator asserts the exact expected prompt per scenario.
 - Every answer, right or wrong, leads to an explanation step that asks how the child knows; explanation quality is evaluated with a rubric, not string matching.
 - Hint escalation is explicit and the reached level is recorded when hint state is implemented.
 - Creative mode remains open-ended and can ask the child to invent their own example from the context.
@@ -203,13 +204,13 @@ npm run evaluate:ask
 
 The dependency-free harness uses [scenario data](./evaluations/scenarios.json) and [the evaluator](./scripts/evaluate-ask.mjs). It sends live requests to `/api/ask`, applies semantic checks, and exits nonzero when a scenario fails. It does not require or assert one fixed model sentence. Use `--scenario <id>` for a focused check, `--base-url <url>` for another server, `--json` for machine-readable output, or `--fail-fast` to stop after the first failure. The endpoint must be running with the uploaded sample documents and Ollama available.
 
-The 22 scenarios cover correct, incorrect, partial, uncertain, direct-request, irrelevant, repeated, short, and detailed child answers; present, absent, irrelevant, and multi-chunk context; ages 7, 9, and 12; creative questions; and explanation scoring. The evaluator checks response schemas, correctness labels, grounding signals, age-oriented length, Socratic question shape, answer leakage, and useful follow-up structure. Since the endpoint does not expose retrieved chunks, context checks are black-box checks based on expected evidence and uncertainty; do not claim they directly prove which chunks were selected.
+The 27 scenarios cover correct, incorrect, partial, uncertain, direct-request, irrelevant, repeated, short, and detailed child answers; unanswerable why-questions, single-word repeats, invented extras, and frustration escalation; present, absent, irrelevant, and multi-chunk context; ages 7, 9, and 12; creative questions; and explanation scoring. The evaluator checks response schemas, correctness labels, grounding signals, age-oriented length, Socratic question shape, answer leakage, required/forbidden feedback wording (`feedbackMustInclude` / `feedbackMustNotInclude`), and useful follow-up structure. Since the endpoint does not expose retrieved chunks, context checks are black-box checks based on expected evidence and uncertainty; do not claim they directly prove which chunks were selected.
 
 Exercise additional endpoint boundaries with a local request tool or the Ask page. Cover at least:
 
 1. Valid `question` guided mode: 200, guiding-question schema, grounded short question.
 2. Valid `question` creative mode: 200, creative question behavior.
-3. Valid `answer` mode: 200, evaluation schema, `How did you know?`.
+3. Valid `answer` mode: 200, evaluation schema, grade-specific follow-up prompt (see `answer` above).
 4. Valid `explanation` mode: 200, numeric 0-100 score and final prompt.
 5. Missing question, answer, and explanation: each mode returns 400.
 6. Irrelevant or empty retrieval: 200 honest no-context response and no LLM dependency.

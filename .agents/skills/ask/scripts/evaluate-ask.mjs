@@ -111,6 +111,10 @@ function evaluateResponse(scenario, status, response, elapsedMs) {
     failures.push("feedback contains forbidden unsupported wording");
   }
 
+  if (expect.feedbackMustInclude && !includesAll(response.feedback, expect.feedbackMustInclude)) {
+    failures.push(`feedback is missing required wording: ${expect.feedbackMustInclude.join(", ")}`);
+  }
+
   const maxWords = expect.ageMaxWords;
   if (maxWords && words(responseText).length > maxWords) failures.push(`response is too long for the scenario age (${words(responseText).length} words > ${maxWords})`);
 

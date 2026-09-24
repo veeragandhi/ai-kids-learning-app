@@ -223,6 +223,29 @@ export default function ClientLesson() {
     }
   };
 
+  const saveLastLesson = () => {
+    try {
+      sessionStorage.setItem(
+        "lastLesson",
+        JSON.stringify({ topic, age, lesson: lesson.slice(0, 2000), at: Date.now() })
+      );
+    } catch {
+      // storage may be unavailable; quiz/ask still work via URL topic
+    }
+  };
+
+  const startQuizFromLesson = () => {
+    if (!lesson || !topic) return;
+    saveLastLesson();
+    router.push(`/quiz?topic=${encodeURIComponent(topic)}&age=${age}&fromLesson=1`);
+  };
+
+  const askAboutLesson = () => {
+    if (!lesson || !topic) return;
+    saveLastLesson();
+    router.push(`/ask?topic=${encodeURIComponent(topic)}&age=${age}&source=lesson`);
+  };
+
   const generateLesson = async () => {
     if (!topic) return;
 
@@ -737,8 +760,10 @@ export default function ClientLesson() {
                       </p>
                     </div>
 
-                    <button
-                      className="
+                    <div className="flex flex-col gap-3 md:flex-row">
+                      <button
+                        onClick={startQuizFromLesson}
+                        className="
                         flex items-center justify-center gap-2
                         rounded-2xl
                         bg-white
@@ -749,10 +774,29 @@ export default function ClientLesson() {
                         hover:scale-105
                         active:scale-95
                       "
-                    >
-                      <Rocket size={20} />
-                      Start Quiz
-                    </button>
+                      >
+                        <Rocket size={20} />
+                        Start Quiz
+                      </button>
+
+                      <button
+                        onClick={askAboutLesson}
+                        className="
+                        flex items-center justify-center gap-2
+                        rounded-2xl
+                        bg-white/20
+                        px-6 py-4
+                        font-bold
+                        text-white
+                        backdrop-blur-md
+                        transition-all
+                        hover:scale-105
+                        active:scale-95
+                      "
+                      >
+                        ❓ Ask about this lesson
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>

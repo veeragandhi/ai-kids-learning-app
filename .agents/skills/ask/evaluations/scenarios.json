@@ -4,35 +4,35 @@
     "description": "Correct answer supported by the plants document",
     "mode": "answer",
     "payload": { "question": "What do plants need to grow?", "age": 9, "guidingQuestion": "What clues in the text tell you what plants need?", "studentAnswer": "Plants need water, sunlight, and air." },
-    "expect": { "correctness": "correct", "evidence": ["water", "sunlight", "air"], "nextPrompt": "How did you know?" }
+    "expect": { "correctness": "correct", "evidence": ["water", "sunlight", "air"], "nextPrompt": "How do you know?" }
   },
   {
     "id": "incorrect-answer",
     "description": "Incorrect answer should be corrected kindly without inventing facts",
     "mode": "answer",
     "payload": { "question": "What do plants need to grow?", "age": 9, "guidingQuestion": "What clues in the text tell you what plants need?", "studentAnswer": "Plants need rocks and fire." },
-    "expect": { "correctness": "incorrect", "evidence": ["water", "sunlight", "air"], "nextPrompt": "How did you know?", "feedbackMustNotInclude": ["rocks", "fire"] }
+    "expect": { "correctness": "incorrect", "evidence": ["water", "sunlight", "air"], "nextPrompt": "What detail from the lesson can help us?", "feedbackMustNotInclude": ["rocks", "fire"] }
   },
   {
     "id": "partially-correct-answer",
     "description": "Partially correct answer is recognized and invites evidence",
     "mode": "answer",
     "payload": { "question": "What do plants need to grow?", "age": 9, "guidingQuestion": "What clues in the text tell you what plants need?", "studentAnswer": "Plants need water." },
-    "expect": { "correctness": "partial", "evidence": ["water"], "nextPrompt": "How did you know?" }
+    "expect": { "correctness": "partial", "evidence": ["water"], "nextPrompt": "What other detail does the lesson give about grow?" }
   },
   {
     "id": "dont-know",
     "description": "Uncertainty receives kind, actionable support",
     "mode": "answer",
     "payload": { "question": "What do animals need?", "age": 7, "guidingQuestion": "What do the animals in the text need?", "studentAnswer": "I don't know." },
-    "expect": { "correctness": "partial", "evidence": ["food", "water", "shelter"], "nextPrompt": "How did you know?", "feedbackMustNotInclude": ["animals need food, water, and shelter"] }
+    "expect": { "correctness": "partial", "evidence": ["food", "water", "shelter"], "nextPrompt": "What clue can you find in the lesson about this?", "feedbackMustNotInclude": ["animals need food, water, and shelter"] }
   },
   {
     "id": "dont-understand",
-    "description": "Confusion receives a simpler next step",
+    "description": "Confusion receives a simpler next step (plants question keeps retrieval clean; dino retrieval mixing is tracked separately)",
     "mode": "answer",
-    "payload": { "question": "Why did Stegosaurus live before T. rex?", "age": 9, "guidingQuestion": "Which dates can you compare?", "studentAnswer": "I don't understand." },
-    "expect": { "correctness": "partial", "evidence": ["stegosaurus", "rex"], "nextPrompt": "How did you know?" }
+    "payload": { "question": "Why do plants need sunlight to grow?", "age": 9, "guidingQuestion": "Which clue tells you about sunlight?", "studentAnswer": "I don't understand." },
+    "expect": { "correctness": "partial", "evidence": ["water", "sunlight"], "nextPrompt": "What clue can you find in the lesson about this?" }
   },
   {
     "id": "direct-answer-request",
@@ -46,28 +46,28 @@
     "description": "An answer from another topic is not accepted as evidence",
     "mode": "answer",
     "payload": { "question": "What do plants need to grow?", "age": 9, "guidingQuestion": "What clues in the text tell you what plants need?", "studentAnswer": "Fish live in water." },
-    "expect": { "correctness": "incorrect", "evidence": ["water", "sunlight", "air"], "nextPrompt": "How did you know?" }
+    "expect": { "correctness": "incorrect", "evidence": ["water", "sunlight", "air"], "nextPrompt": "What did the lesson say about your question?" }
   },
   {
     "id": "repeated-answer",
     "description": "Repeated wording does not inflate correctness or derail feedback",
     "mode": "answer",
     "payload": { "question": "What do animals need?", "age": 9, "guidingQuestion": "What needs do the animals share?", "studentAnswer": "Food and water. Food and water." },
-    "expect": { "correctness": "partial", "evidence": ["food", "water"], "nextPrompt": "How did you know?" }
+    "expect": { "correctness": "partial", "evidence": ["food", "water"], "nextPrompt": "What other detail does the lesson give about animals?" }
   },
   {
     "id": "very-short-answer",
     "description": "A one-word answer is evaluated with a useful invitation to add evidence",
     "mode": "answer",
     "payload": { "question": "Where do fish live?", "age": 7, "guidingQuestion": "Which sentence tells you where fish live?", "studentAnswer": "Water." },
-    "expect": { "correctness": "correct", "evidence": ["fish", "water"], "nextPrompt": "How did you know?" }
+    "expect": { "correctness": "correct", "evidence": ["fish", "water"], "nextPrompt": "How do you know?" }
   },
   {
     "id": "detailed-answer",
     "description": "A detailed, grounded answer is not penalized for extra relevant detail",
     "mode": "answer",
     "payload": { "question": "What can an elephant use its trunk for?", "age": 12, "guidingQuestion": "What jobs does the text list for an elephant's trunk?", "studentAnswer": "An African elephant uses its trunk for breathing, smelling, drinking, and grasping objects. The trunk helps it do several different jobs." },
-    "expect": { "correctness": "correct", "evidence": ["breathing", "smelling", "drinking", "grasping"], "nextPrompt": "How did you know?" }
+    "expect": { "correctness": "correct", "evidence": ["breathing", "smelling", "drinking", "grasping"], "nextPrompt": "How do you know?" }
   },
   {
     "id": "present-in-context",
@@ -109,7 +109,7 @@
     "description": "Age nine receives kind evidence-focused evaluation",
     "mode": "answer",
     "payload": { "question": "What do plants need to grow?", "age": 9, "guidingQuestion": "What clues tell you what plants need?", "studentAnswer": "They need water and sunlight because the text says so." },
-    "expect": { "correctness": "partial", "evidence": ["water", "sunlight"], "nextPrompt": "How did you know?", "ageMaxWords": 70 }
+    "expect": { "correctness": "partial", "evidence": ["water", "sunlight"], "nextPrompt": "What other detail does the lesson give about grow?", "ageMaxWords": 70 }
   },
   {
     "id": "age-twelve-explanation",
@@ -152,5 +152,75 @@
     "mode": "explanation",
     "payload": { "question": "What do animals need?", "age": 7, "guidingQuestion": "What needs do you notice?", "studentAnswer": "I think food.", "explanation": "I don't know how I know." },
     "expect": { "evidence": ["food"], "scoreAtMost": 70, "ageMaxWords": 70 }
+  },
+  {
+    "id": "unanswerable-why-humans",
+    "description": "A why question about something the lesson never mentions gets honesty, not a redirection loop",
+    "mode": "question",
+    "payload": { "question": "Why don't humans have trunks like elephants?", "age": 8, "questionType": "guided" },
+    "expect": { "noContextOrUncertainty": true }
+  },
+  {
+    "id": "unanswerable-answer-mode",
+    "description": "Restating an unanswerable question is affirmed honestly instead of graded against unrelated facts",
+    "mode": "answer",
+    "payload": { "question": "Why don't humans have trunks?", "age": 8, "guidingQuestion": "What does the lesson say about trunks?", "studentAnswer": "Because people are different." },
+    "expect": { "correctness": "partial", "evidence": ["smell", "water", "elephants"], "nextPrompt": "Want to try another question from the lesson?", "feedbackMustNotInclude": ["Good memory", "trunks to"] }
+  },
+  {
+    "id": "single-token-repeat-not-praise",
+    "description": "Repeating one lesson word is not praised as recall",
+    "mode": "answer",
+    "payload": { "question": "What can an elephant use its trunk for?", "age": 8, "guidingQuestion": "What jobs does the text list for an elephant's trunk?", "studentAnswer": "Trunk." },
+    "expect": { "correctness": "incorrect", "evidence": ["smell"], "nextPrompt": "What detail from the lesson can help us?", "feedbackMustNotInclude": ["Good memory"] }
+  },
+  {
+    "id": "unsupported-extra-flagged",
+    "description": "A partly right answer with an invented extra keeps credit but flags the extra gently",
+    "mode": "answer",
+    "payload": { "question": "What can an elephant use its trunk for?", "age": 8, "guidingQuestion": "What jobs does the text list for an elephant's trunk?", "studentAnswer": "Elephants use trunks to drink water and to play games." },
+    "expect": { "correctness": "partial", "evidence": ["water"], "nextPrompt": "What other detail does the lesson give about trunk?", "feedbackMustInclude": ["play", "does not mention"], "feedbackMustNotInclude": ["trunks to"] }
+  },
+  {
+    "id": "frustration-escalation",
+    "description": "A frustrated child who says the reply does not answer gets the graceful summary, not another grade",
+    "mode": "answer",
+    "payload": { "question": "What can an elephant use its trunk for?", "age": 8, "guidingQuestion": "What clue does the lesson give about trunk?", "studentAnswer": "I don't like this. This does not answer my question." },
+    "expect": { "correctness": "partial", "evidence": ["smell", "water"], "nextPrompt": "Want to try another question from the lesson?" }
+  },
+  {
+    "id": "lesson-ignores-untaught",
+    "description": "Lesson-linked Ask must not teach document facts the displayed lesson never taught (breathing/communication)",
+    "mode": "answer",
+    "payload": { "source": "lesson", "lessonText": "Elephants have long trunks. They use them to smell food and find water.", "question": "What do trunks help elephants do?", "age": 8, "guidingQuestion": "What does the lesson say about trunks?", "studentAnswer": "Trunks help elephants breathe." },
+    "expect": { "correctness": "partial", "evidence": ["smell", "water", "trunk"], "nextPrompt": "What other detail does the lesson give about elephants?", "feedbackMustInclude": ["does not mention", "breathe"], "feedbackMustNotInclude": ["Breathing helps", "communicat"] }
+  },
+  {
+    "id": "lesson-grades-lesson-correct",
+    "description": "An answer correct per the displayed lesson is accepted even though the document holds more detail",
+    "mode": "answer",
+    "payload": { "source": "lesson", "lessonText": "Elephants have long trunks. They use them to smell food and find water.", "question": "What do trunks help elephants do?", "age": 8, "guidingQuestion": "What does the lesson say about trunks?", "studentAnswer": "They use them to smell food and find water." },
+    "expect": { "correctness": "correct", "evidence": ["smell", "water"], "nextPrompt": "How do you know?" }
+  },
+  {
+    "id": "lesson-unknown-stays-unknown",
+    "description": "Lesson-linked Ask answers honestly when the displayed lesson does not cover the question",
+    "mode": "question",
+    "payload": { "source": "lesson", "lessonText": "Elephants have long trunks. They use them to smell food and find water.", "question": "Why do trunks help elephants breathe?", "age": 8, "questionType": "guided" },
+    "expect": { "noContextOrUncertainty": true }
+  },
+  {
+    "id": "standalone-source-lock",
+    "description": "Explicit standalone source keeps document retrieval working as before",
+    "mode": "question",
+    "payload": { "source": "standalone", "question": "What do plants need to grow?", "age": 9, "questionType": "guided" },
+    "expect": { "questionType": "guided", "noDirectAnswer": true }
+  },
+  {
+    "id": "dino-no-forests-clue",
+    "description": "Dinosaur uncertainty names a dinosaur-grounded clue, never the animals-chunk forests leak",
+    "mode": "answer",
+    "payload": { "question": "Why did Stegosaurus live before T. rex?", "age": 9, "guidingQuestion": "Which dates can you compare?", "studentAnswer": "I don't know." },
+    "expect": { "correctness": "partial", "evidence": ["rex", "stegosaurus", "live"], "nextPrompt": "What clue can you find in the lesson about this?", "feedbackMustNotInclude": ["forest"] }
   }
 ]

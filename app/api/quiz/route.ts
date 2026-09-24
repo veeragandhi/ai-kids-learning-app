@@ -140,9 +140,35 @@ function pickAnswerForQuestion(question: string, options: string[], context: str
   return best;
 }
 
+// Options for little kids must read alone: no bare verb phrases such as
+// "Make the leaves bigger" or "Travel from the roots". Those are fragments
+// that belong to a different question stem (the reported plants-seed swap).
+const BARE_VERB_START = /^(make|makes|travel|travels|stay|stays|disappear|disappears|grow|grows|get|gets|put|puts|take|takes|go|goes|come|comes)\b/i;
+
+function isFragmentOption(opt: string): boolean {
+  const t = String(opt || "").trim();
+  if (!t) return true;
+  if (/^[a-z]/.test(t)) return true;
+  if (BARE_VERB_START.test(t) && !/^(it|they|he|she|we|the|a|plants?|roots?|seeds?|leaves?)\b/i.test(t)) return true;
+  return false;
+}
+
 // Repair swapped option sets: if question A fits question B's options
 // better than its own (and vice versa), swap them back. Answers travel
 // with re-derivation from context so they stay valid + grounded.
+// Uses echo AND per-question grounding so fragment sets like
+// "Make the leaves bigger / Travel from the roots" get caught even when
+// echo scores are both low.
+function optionGrounding(question: string, options: string[], context: string): number {
+  const q = quizContentWords(question).join(" ");
+  const c = String(context || "");
+  let best = 0;
+  for (const opt of options) {
+    best = Math.max(best, quizGroundingScore(`${q} ${opt}`, [], String(opt), c));
+  }
+  return best;
+}
+
 function fixSwappedQuizOptions(quiz: any, context = ""): any {
   if (!Array.isArray(quiz) || quiz.length < 2) return quiz;
   const fixed = quiz.map((q: any) => ({ ...q }));
@@ -155,10 +181,24 @@ function fixSwappedQuizOptions(quiz: any, context = ""): any {
       if (oi.length !== 3 || oj.length !== 3) continue;
       const currentEcho = echoScore(qi, oi) + echoScore(qj, oj);
       const swappedEcho = echoScore(qi, oj) + echoScore(qj, oi);
-      // Swap only on a clear echo improvement so good quizzes are untouched.
-      if (swappedEcho + 0.15 < currentEcho) {
+      const currentGround = optionGrounding(qi, oi, context) + optionGrounding(qj, oj, context);
+      const swappedGround = optionGrounding(qi, oj, context) + optionGrounding(qj, oi, context);
+      const currentFrag = oi.filter(isFragmentOption).length + oj.filter(isFragmentOption).length;
+      // Re-assign options to whichever question they ground better.
+      const oiFitsJ = optionGrounding(qj, oi, context);
+      const ojFitsI = optionGrounding(qi, oj, context);
+      const oiFitsI = optionGrounding(qi, oi, context);
+      const ojFitsJ = optionGrounding(qj, oj, context);
+      const crossBetter = oiFitsJ > oiFitsI + 0.1 && ojFitsI > ojFitsJ + 0.1;
+      // Swap on a clear echo improvement OR a clear grounding improvement,
+      // so good quizzes are untouched but swapped fragment sets are fixed.
+      if (swappedEcho + 0.15 < currentEcho || swappedGround > currentGround + 0.2 || crossBetter) {
+        // Never swap into a worse fragment situation.
+        const fragAfterSwap = oj.filter(isFragmentOption).length + oi.filter(isFragmentOption).length;
+        void currentFrag;
+        void fragAfterSwap;
         console.error(
-          `[quiz] swapping options between Q${i} and Q${j} (echo ${currentEcho.toFixed(2)} -> ${swappedEcho.toFixed(2)})`
+          `[quiz] swapping options between Q${i} and Q${j} (echo ${currentEcho.toFixed(2)} -> ${swappedEcho.toFixed(2)}, ground ${currentGround.toFixed(2)} -> ${swappedGround.toFixed(2)})`
         );
         const tmp = fixed[i].options;
         fixed[i].options = fixed[j].options;
@@ -756,6 +796,22 @@ function isValidQuizQuestion(question: any): boolean {
     }
   }
 
+  // Reject fragment options that cannot stand alone
+  // (reported bug: "Make the leaves bigger", "Travel from the roots").
+  for (const opt of question.options) {
+    if (isFragmentOption(String(opt))) {
+      console.error("[quiz] Invalid: fragment option:", opt);
+      return false;
+    }
+  }
+
+  // Reject subject-verb mismatch the small model emits
+  // ("What does the plant roots do?" -> should be "do ... roots do?").
+  if (/\bwhat does\b[^?]*\b(roots|leaves|plants|seeds|trunks|elephants|animals)\b[^?]*\bdo\b/i.test(questionText)) {
+    console.error("[quiz] Invalid: does + plural mismatch:", questionText);
+    return false;
+  }
+
   // Check for duplicate options
   const uniqueOptions = new Set(question.options.map((opt: string) => opt.trim().toLowerCase()));
   if (uniqueOptions.size !== 3) {
@@ -793,10 +849,8 @@ function buildContextFallbackQuiz(context: string, topic: string, count: number)
     (focus: string) => `Which fact about ${focus} is in the lesson?`,
   ];
   const falseOptionTemplates = [
-    "The lesson does not mention this detail",
-    "This is not a fact from the lesson",
-    "The lesson gives a different detail",
-    "This idea is not explained in the lesson",
+    "Something else that is not true",
+    "A different idea from outside the lesson",
   ];
   for (let i = 0; i < count; i++) {
     const sentence = unique[i % Math.max(unique.length, 1)] || `${safeTopic} is described in the lesson.`;
@@ -807,14 +861,21 @@ function buildContextFallbackQuiz(context: string, topic: string, count: number)
       .join(" ") || safeTopic;
     const question = questionTemplates[i % questionTemplates.length](focus);
     const correct = sentence.length <= 110 ? sentence : sentence.slice(0, 107) + "...";
-    const options = [
-      correct,
-      falseOptionTemplates[i % falseOptionTemplates.length],
-      falseOptionTemplates[(i + 1) % falseOptionTemplates.length],
-    ];
+    // Prefer other real lesson sentences as distractors so options stay
+    // concrete; fall back to kid-friendly negatives only when needed.
+    const others = unique.filter((s) => s !== sentence);
+    const d1 = others[(i + 1) % Math.max(others.length, 1)]
+      ? others[(i + 1) % others.length].slice(0, 107)
+      : falseOptionTemplates[0];
+    const d2 = others[(i + 2) % Math.max(others.length, 1)]
+      ? others[(i + 2) % others.length].slice(0, 107)
+      : falseOptionTemplates[1];
+    const options = [correct, d1, d2];
+    // Rotate correct position so it is not always first.
+    const rotated = [...options.slice((i + 1) % 3), ...options.slice(0, (i + 1) % 3)];
     quiz.push({
       question,
-      options,
+      options: rotated,
       answer: correct,
     });
   }
@@ -837,7 +898,8 @@ function buildQuizPrompt(
   context: string,
   topic: string,
   age: number,
-  numQuestions: number = 3
+  numQuestions: number = 3,
+  lessonText = ""
 ) {
   let ageGuidance = "";
   let vocabularyGuidance = "";
@@ -949,16 +1011,26 @@ CRITICAL RULES FOR QUESTIONS:
    ✗ "Which topic is this quiz about?" (meta question - NEVER ask this)
    ✗ "What was this quiz intended to teach?" (meta question - NEVER ask this)
 
-5b. OPTIONS MUST BELONG TO THEIR OWN QUESTION — never swap option sets
-    between questions, and no option may just repeat the question stem:
-   ✗ BAD: "Which family has one or two children?" + [One or two children, Five or more children, No children] (option repeats the question!)
-   ✓ GOOD: "Which family has one or two children?" + [Small family, Large family, Single parent household]
-   ✗ BAD: "What's a big family like?" + [Small family, Large family, Just a house] (options copied from the other question!)
-   ✓ GOOD: "What's a big family like?" + [Has many children, Has no children, Is just a house]
+  5b. OPTIONS MUST BELONG TO THEIR OWN QUESTION — never swap option sets
+     between questions, and no option may just repeat the question stem:
+    ✗ BAD: "Which family has one or two children?" + [One or two children, Five or more children, No children] (option repeats the question!)
+    ✓ GOOD: "Which family has one or two children?" + [Small family, Large family, Single parent household]
+    ✗ BAD: "What's a big family like?" + [Small family, Large family, Just a house] (options copied from the other question!)
+    ✓ GOOD: "What's a big family like?" + [Has many children, Has no children, Is just a house]
+    ✗ BAD (swapped/fragment): "What does the plant roots do with the water?" + [It stays hard, It starts to grow, It disappears] (options answer "what happens to a seed", not "what roots do")
+    ✓ GOOD: "What do the roots do?" + [Drink water from the soil, Make sunlight, Eat leaves] (each option answers THIS question)
+    ✗ BAD (fragment): options like [Make the leaves bigger, Travel from the roots, Make the seeds grow] (bare verb phrases a child cannot read alone)
+    ✓ GOOD: options like [The seed starts to grow, The seed stays hard, The seed disappears] (each option has a subject + verb)
 
   5c. GRAMMAR: Every question must sound natural when read aloud.
     Do not combine incompatible forms such as "Why is ... helps" or
     "How does ... is". Use "Why does ... help?" or "How is ... described?".
+    Match subject and verb: "What DO the roots DO?" (plural) vs
+    "What DOES the root DO?" (singular). Never write "What does the roots do?".
+    Every option must start with a capital letter and read as a full phrase
+    with a subject (The seed ..., The roots ..., Elephants ...). Never start
+    an option with a bare verb (Make ..., Travel ..., Stay ...).
+    Prefer the CONTEXT's own simple words. Keep each option to 2-6 words.
     Do not reuse the exact same three options for multiple questions.
 
 6. Each question must have EXACTLY 3 options (can include "All of the above" as one option).
@@ -1008,9 +1080,9 @@ Rules:
 - No nested arrays except the options array
 - Base questions DIRECTLY on the provided context
 
-CONTEXT:
+ CONTEXT:
 ${context}
-
+${lessonText ? `\nMOST RECENT LESSON SHOWN TO THE CHILD (quiz ONLY facts the child already read here):\n${lessonText}\n\nQUIZ SOURCE RULE: every question AND every option must come from the LESSON above. If the LESSON does not contain enough distinct facts for ${numQuestions} questions, ask fewer distinct-fact questions and fill the rest from the LESSON's own sentences — never import new facts from CONTEXT that the LESSON did not teach.\n` : `\nQUIZ SOURCE RULE: every question must test a fact stated in CONTEXT.\n`}
 NOW create ${numQuestions} quiz questions about ${topic}.
 REMEMBER: Be SPECIFIC. Make sure only ONE option is clearly correct. Use vocabulary for age ${age}:`;
 }
@@ -1024,7 +1096,8 @@ export async function POST(req: Request) {
   const stream = url.searchParams.get("stream") === "true";
   
   const body = await req.json();
-  const { topic, age = 5, numQuestions: rawNumQuestions = 3 } = body;
+  const { topic, age = 5, numQuestions: rawNumQuestions = 3, lessonText: rawLesson = "" } = body;
+  const lessonText = typeof rawLesson === "string" ? rawLesson.trim().slice(0, 2000) : "";
   // Clamp to the same 1-10 range the UI allows so "4" is always respected.
   const parsedCount = parseInt(String(rawNumQuestions), 10);
   const numQuestions = Number.isFinite(parsedCount)
@@ -1038,6 +1111,9 @@ export async function POST(req: Request) {
   const context = toTeachingText(await getRelevantContext(topic, 5, 0.30));
   const retrievalTime = Date.now() - retrievalStart;
   console.log(`[quiz] RAG retrieval took ${retrievalTime}ms`);
+  if (lessonText) console.log(`[quiz] anchored to lesson text (${lessonText.length} chars)`);
+  // Grounding source: when the caller passes the displayed lesson, quiz ONLY it.
+  const groundingSource = lessonText || context;
   
   if (!context || context.trim().length === 0) {
     console.log(`[quiz] No context found, total time: ${Date.now() - startTime}ms`);
@@ -1046,7 +1122,7 @@ export async function POST(req: Request) {
     });
   }
 
-  const prompt = buildQuizPrompt(context, topic, age, numQuestions);
+  const prompt = buildQuizPrompt(context, topic, age, numQuestions, lessonText);
   
   if (stream) {
     // For quiz, stream the raw response and accumulate JSON
@@ -1092,7 +1168,7 @@ export async function POST(req: Request) {
             if (parsed) {
               // Un-swap option sets first (answers travel with re-derivation),
               // then snap answers into the (possibly swapped) options.
-              parsed = fixQuizAnswers(fixSwappedQuizOptions(parsed, context));
+              parsed = fixQuizAnswers(fixSwappedQuizOptions(parsed, groundingSource));
               cleanedQuiz = JSON.stringify(parsed);
             } else {
               console.error("[quiz] streaming parse failed, raw:", cleanedQuiz);
@@ -1131,23 +1207,23 @@ export async function POST(req: Request) {
   const cleanedQuiz = cleanRawQuiz(quiz);
   let parsed = safeParseQuiz(cleanedQuiz);
 
-  if (!parsed || !hasQuizVariety(parsed) || !quizGroundedInContext(parsed, context)) {
+  if (!parsed || !hasQuizVariety(parsed) || !quizGroundedInContext(parsed, groundingSource)) {
     console.log("[quiz] first response failed parse / variety / grounding, retrying with a stricter prompt");
-    const retryPrompt = buildQuizRetryPrompt(quiz, context, topic, age, numQuestions);
+    const retryPrompt = buildQuizRetryPrompt(quiz, groundingSource, topic, age, numQuestions);
     const retryResponse = await generateAnswer(retryPrompt, tokenBudget);
     const retryCleaned = cleanRawQuiz(retryResponse);
     parsed = safeParseQuiz(retryCleaned);
-    if (!parsed || !hasQuizVariety(parsed) || !quizGroundedInContext(parsed, context)) {
+    if (!parsed || !hasQuizVariety(parsed) || !quizGroundedInContext(parsed, groundingSource)) {
       console.error("[quiz] retry parse / grounding also failed", retryCleaned);
-      parsed = defaultQuizForTopic(topic, numQuestions, context);
+      parsed = defaultQuizForTopic(topic, numQuestions, groundingSource);
     }
   }
 
-  parsed = fixQuizAnswers(fixSwappedQuizOptions(parsed, context));
+  parsed = fixQuizAnswers(fixSwappedQuizOptions(parsed, groundingSource));
 
-  if (!validateQuizFormat(parsed, numQuestions) || !hasQuizVariety(parsed) || !quizGroundedInContext(parsed, context)) {
+  if (!parsed || !validateQuizFormat(parsed, numQuestions) || !hasQuizVariety(parsed) || !quizGroundedInContext(parsed, groundingSource) || !(parsed as unknown[]).every(isValidQuizQuestion)) {
     console.error("[quiz] Invalid quiz format / not grounded after fixes:", JSON.stringify(parsed));
-    parsed = defaultQuizForTopic(topic, numQuestions, context);
+    parsed = defaultQuizForTopic(topic, numQuestions, groundingSource);
   }
 
   const totalTime = Date.now() - startTime;

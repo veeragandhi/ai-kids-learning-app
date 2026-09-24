@@ -60,3 +60,6 @@ next-env.d.ts
 dev-ocr.log
 dev-*.log
 server.log
+
+# rendered social videos (large local binaries; re-render with npm run video:social:shots)
+/video/out/
