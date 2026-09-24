@@ -1,0 +1,1059 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>AmigosNest — "AI shouldn't do your child's thinking" (35s, 9:16)</title>
+<!--
+  Vertical 9:16 social stage for AmigosNest.
+
+  Rendered by scripts/social-video/render.mjs: Playwright opens this page at
+  1080x1920, the page animates itself from `window.__AMIGOS_TIMELINE__` (injected
+  before load), and the recorder captures it. Audio is muxed in post, so the
+  stage is intentionally silent.
+
+  Open it directly in a browser (file:// works) to preview: it falls back to the
+  timeline in scripts/social-video/lines.mjs with estimated voiceover lengths.
+  Query params for review:  ?scene=s4   ?time=12.5   ?scale=0.5   ?font=1.6
+-->
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #000;
+    overflow: hidden;
+    font-family: Arial, Helvetica, "Segoe UI", sans-serif;
+  }
+  #stage {
+    width: 1080px;
+    height: 1920px;
+    transform-origin: top left;
+    position: absolute;
+    top: 0;
+    left: 0;
+  }
+  #stage svg { display: block; width: 1080px; height: 1920px; }
+
+  /* ── scene / variant visibility ─────────────────────────────────────────── */
+  .scene { opacity: 0; transition: opacity 0.36s linear; }
+  .variant { display: none; }
+  .shown { display: inline; }
+
+  /* overlay crossfades snap when the recorder seeks (stills, scene preview). */
+  body.instant .scene,
+  body.instant #room-tint,
+  body.instant #think-light,
+  body.instant #screen-answer,
+  body.instant #screen-asking,
+  body.instant #screen-question { transition: none !important; }
+
+  /* arms, like expressions, are swapped by attribute */
+  #daughter-arms[data-arm="write"] [data-when="write"],
+  #daughter-arms[data-arm="idle"] [data-when="idle"],
+  #daughter-arms[data-arm="chin"] [data-when="chin"],
+  #daughter-arms[data-arm="raise"] [data-when="raise"],
+  #mother-arms[data-arm="desk"] [data-when="desk"],
+  #mother-arms[data-arm="point"] [data-when="point"],
+  #mother-arms[data-arm="hug"] [data-when="hug"] { display: inline; }
+
+  /* ── life: a slow breath so held frames are never frozen ───────────────── */
+  @keyframes breathe {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-7px); }
+  }
+  #daughter, #daughter-arms { animation: breathe 4.4s ease-in-out infinite; }
+  #mother, #mother-arms { animation: breathe 5.4s ease-in-out infinite; }
+
+  @keyframes screen-pulse {
+    0% { filter: brightness(1); }
+    35% { filter: brightness(1.07); }
+    100% { filter: brightness(1); }
+  }
+  #laptop.pulse { animation: screen-pulse 0.32s ease-out; }
+
+  #daughter[data-expr="asking"] [data-when="asking"],
+  #daughter[data-expr="flat"] [data-when="flat"],
+  #daughter[data-expr="think"] [data-when="think"],
+  #daughter[data-expr="aha"] [data-when="aha"],
+  #daughter[data-expr="write"] [data-when="write"],
+  #daughter[data-expr="pose"] [data-when="pose"] { display: inline; }
+
+  #mother[data-expr="warm"] [data-when="warm"],
+  #mother[data-expr="talk"] [data-when="talk"],
+  #mother[data-expr="proud"] [data-when="proud"],
+  #mother[data-expr="hug"] [data-when="hug"] { display: inline; }
+
+  /* laptop screen states — JS only swaps data-state, CSS picks the visible layer */
+  #laptop #screen-idle,
+  #laptop #screen-answer,
+  #laptop #screen-question,
+  #laptop #screen-asking { opacity: 0; }
+  #laptop #screen-answer,
+  #laptop #screen-asking,
+  #laptop #screen-question { transition: opacity 0.28s linear; }
+  #laptop[data-state="idle"] #screen-idle { opacity: 1; }
+  #laptop[data-state="asking"] #screen-asking { opacity: 1; }
+  #laptop[data-state="answer"] #screen-answer { opacity: 1; }
+  #laptop[data-state="question"] #screen-question { opacity: 1; }
+
+  #room-tint { transition: opacity .5s linear; }
+  .vignette { mix-blend-mode: multiply; }
+</style>
+</head>
+<body>
+<div id="stage">
+<svg viewBox="0 0 1080 1920" width="1080" height="1920" xmlns="http://www.w3.org/2000/svg">
+<defs>
+  <linearGradient id="wallGrad" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="1340">
+    <stop offset="0" stop-color="#fdf3e4" />
+    <stop offset="1" stop-color="#f2e0c9" />
+  </linearGradient>
+  <linearGradient id="floorGrad" gradientUnits="userSpaceOnUse" x1="0" y1="1280" x2="0" y2="1920">
+    <stop offset="0" stop-color="#e3cdb0" />
+    <stop offset="1" stop-color="#d2b894" />
+  </linearGradient>
+  <linearGradient id="skyGrad" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#cfe6f5" />
+    <stop offset="1" stop-color="#eaf6fc" />
+  </linearGradient>
+  <linearGradient id="screenGrad" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#f4f8fb" />
+    <stop offset="1" stop-color="#dfe9f2" />
+  </linearGradient>
+  <linearGradient id="deskGrad" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#d09a63" />
+    <stop offset="1" stop-color="#b27a45" />
+  </linearGradient>
+  <linearGradient id="brandGrad" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#fdf6ea" />
+    <stop offset="1" stop-color="#f4e4cd" />
+  </linearGradient>
+  <radialGradient id="warmGlow" cx="0.3" cy="0.35" r="0.75">
+    <stop offset="0" stop-color="#ffd88c" stop-opacity="0.75" />
+    <stop offset="1" stop-color="#ffd88c" stop-opacity="0" />
+  </radialGradient>
+  <radialGradient id="vignetteGrad" cx="0.5" cy="0.45" r="0.78">
+    <stop offset="0.55" stop-color="#2b1b0c" stop-opacity="0" />
+    <stop offset="1" stop-color="#2b1b0c" stop-opacity="0.3" />
+  </radialGradient>
+  <radialGradient id="thoughtGrad" cx="0.5" cy="0.5" r="0.7">
+    <stop offset="0" stop-color="#fffaf0" />
+    <stop offset="1" stop-color="#f0e2ce" />
+  </radialGradient>
+  <filter id="softShadow" x="-30%" y="-30%" width="160%" height="160%">
+    <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#3a2410" flood-opacity="0.18" />
+  </filter>
+  <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+    <feGaussianBlur stdDeviation="14" />
+  </filter>
+  <clipPath id="laptopClip">
+    <path d="M 322 1152 L 758 1152 L 806 1462 L 274 1462 Z" />
+  </clipPath>
+</defs>
+
+<!-- Everything inside #camera moves together (subtle push / drift per scene). -->
+<g id="camera">
+
+<!-- ═══ Room ═══════════════════════════════════════════════════════════════ -->
+<g id="room">
+  <!-- ART_BLEED px of extra wall/floor on every side: the camera drifts inside
+       this margin, so its own framing can never expose the edge of the art. -->
+  <rect x="-400" y="-400" width="1880" height="1740" fill="url(#wallGrad)" />
+  <rect x="-400" y="1280" width="1880" height="1040" fill="url(#floorGrad)" />
+  <rect x="-400" y="1276" width="1880" height="10" fill="#c9ae8a" opacity="0.55" />
+
+  <!-- window with afternoon light -->
+  <g id="window">
+    <rect x="66" y="392" width="330" height="418" rx="14" fill="#f8f0e2" />
+    <rect x="84" y="410" width="294" height="382" rx="8" fill="url(#skyGrad)" />
+    <circle cx="300" cy="478" r="46" fill="#ffd88c" />
+    <circle cx="300" cy="478" r="66" fill="#ffd88c" opacity="0.35" />
+    <g fill="#ffffff" opacity="0.9">
+      <ellipse cx="166" cy="500" rx="52" ry="26" />
+      <ellipse cx="212" cy="490" rx="40" ry="22" />
+      <ellipse cx="150" cy="640" rx="46" ry="22" />
+      <ellipse cx="200" cy="654" rx="34" ry="18" />
+    </g>
+    <rect x="222" y="410" width="10" height="382" fill="#f8f0e2" />
+    <rect x="84" y="596" width="294" height="10" fill="#f8f0e2" />
+    <rect x="52" y="380" width="358" height="18" rx="9" fill="#fdf8ee" />
+    <rect x="52" y="800" width="358" height="20" rx="10" fill="#fdf8ee" />
+    <!-- pot with a small plant on the sill -->
+    <path d="M 300 806 L 356 806 L 348 862 L 308 862 Z" fill="#d98b5f" />
+    <g stroke="#5aa06a" stroke-width="9" stroke-linecap="round" fill="none">
+      <path d="M 328 806 C 322 776 306 762 292 758" />
+      <path d="M 328 806 C 334 774 352 760 366 756" />
+      <path d="M 328 806 L 328 772" />
+    </g>
+  </g>
+
+  <!-- framed drawing on the wall -->
+  <g id="wall-art" transform="rotate(-2 850 528)" filter="url(#softShadow)">
+    <rect x="726" y="418" width="248" height="220" rx="8" fill="#fffaf0" stroke="#c9a97d" stroke-width="8" />
+    <circle cx="790" cy="472" r="22" fill="#f6c15a" />
+    <path d="M 900 500 L 900 592" stroke="#4f9d5d" stroke-width="8" stroke-linecap="round" />
+    <ellipse cx="880" cy="546" rx="22" ry="13" fill="#68b377" />
+    <ellipse cx="922" cy="574" rx="22" ry="13" fill="#68b377" />
+    <path d="M 866 592 L 934 592 L 926 618 L 874 618 Z" fill="#d98b5f" />
+    <g stroke="#e6d2b4" stroke-width="6" stroke-linecap="round">
+      <path d="M 752 552 L 826 552" />
+      <path d="M 752 580 L 806 580" />
+    </g>
+  </g>
+</g>
+<!-- ═══ Daughter ════════════════════════════════════════════════════════════ -->
+<g id="daughter" data-expr="write">
+  <ellipse cx="395" cy="716" rx="99" ry="95" fill="#2a1f1a" />
+  <path d="M 300 790 C 282 850 282 920 296 980" stroke="#2a1f1a" stroke-width="30" stroke-linecap="round" fill="none" />
+  <path d="M 492 790 C 510 850 510 920 496 980" stroke="#2a1f1a" stroke-width="30" stroke-linecap="round" fill="none" />
+  <circle cx="296" cy="988" r="13" fill="#f2a541" />
+  <circle cx="496" cy="988" r="13" fill="#f2a541" />
+
+  <rect x="372" y="812" width="46" height="74" rx="22" fill="#c98a5b" />
+  <path d="M 336 902 C 336 878 360 870 395 870 C 430 870 454 878 454 902 L 474 1128 L 316 1128 Z" fill="#e8a13a" />
+  <path d="M 366 872 L 395 906 L 424 872 C 412 866 378 866 366 872 Z" fill="#f6c877" />
+
+  <ellipse cx="395" cy="752" rx="86" ry="84" fill="#d9a273" />
+  <ellipse cx="311" cy="762" rx="15" ry="20" fill="#cf9564" />
+  <circle cx="305" cy="792" r="9" fill="#e8b34f" />
+  <path d="M 313 726 C 330 686 360 672 395 672 C 432 672 462 688 478 728 C 452 706 424 698 395 698 C 366 698 336 708 313 726 Z" fill="#33261d" />
+  <g transform="translate(448 734)">
+    <circle cx="0" cy="-10" r="9" fill="#f2a541" />
+    <circle cx="10" cy="0" r="9" fill="#f2a541" />
+    <circle cx="0" cy="10" r="9" fill="#f2a541" />
+    <circle cx="-10" cy="0" r="9" fill="#f2a541" />
+    <circle cx="0" cy="0" r="6" fill="#fff0c9" />
+  </g>
+
+  <!-- eyes (base) + movable pupils -->
+  <ellipse cx="367" cy="760" rx="17" ry="19" fill="#fffdf8" />
+  <ellipse cx="424" cy="760" rx="17" ry="19" fill="#fffdf8" />
+  <g id="d-pupils">
+    <circle cx="369" cy="764" r="9" fill="#2a1f1a" />
+    <circle cx="426" cy="764" r="9" fill="#2a1f1a" />
+    <circle cx="372" cy="760" r="3" fill="#ffffff" />
+    <circle cx="429" cy="760" r="3" fill="#ffffff" />
+  </g>
+
+  <!-- expression variants: brows / mouth / extras -->
+  <g data-when="asking" class="variant">
+    <path d="M 348 730 C 356 718 372 716 382 722" stroke="#33261d" stroke-width="7" stroke-linecap="round" fill="none" />
+    <path d="M 440 730 C 432 718 416 716 406 722" stroke="#33261d" stroke-width="7" stroke-linecap="round" fill="none" />
+    <ellipse cx="395" cy="802" rx="14" ry="11" fill="#8b4634" />
+  </g>
+  <g data-when="flat" class="variant">
+    <path d="M 348 732 L 382 734" stroke="#33261d" stroke-width="7" stroke-linecap="round" fill="none" />
+    <path d="M 440 732 L 406 734" stroke="#33261d" stroke-width="7" stroke-linecap="round" fill="none" />
+    <path d="M 376 804 L 414 804" stroke="#8b4634" stroke-width="7" stroke-linecap="round" fill="none" />
+    <path d="M 350 749 C 358 740 376 740 384 748 Z" fill="#d9a273" />
+    <path d="M 440 749 C 432 740 414 740 406 748 Z" fill="#d9a273" />
+  </g>
+  <g data-when="think" class="variant">
+    <path d="M 348 726 C 358 716 374 716 382 724" stroke="#33261d" stroke-width="7" stroke-linecap="round" fill="none" />
+    <path d="M 404 730 L 438 734" stroke="#33261d" stroke-width="7" stroke-linecap="round" fill="none" />
+    <ellipse cx="395" cy="804" rx="9" ry="10" fill="#8b4634" />
+  </g>
+  <g data-when="aha" class="variant">
+    <path d="M 346 724 C 356 712 374 710 384 720" stroke="#33261d" stroke-width="7" stroke-linecap="round" fill="none" />
+    <path d="M 442 724 C 432 712 414 710 404 720" stroke="#33261d" stroke-width="7" stroke-linecap="round" fill="none" />
+    <path d="M 372 796 C 380 824 412 824 420 796 Z" fill="#8b4634" />
+    <path d="M 380 802 C 388 814 404 814 412 802 Z" fill="#f2a0a0" />
+    <g fill="#f6c15a">
+      <path d="M 300 646 l 6 16 l 16 6 l -16 6 l -6 16 l -6 -16 l -16 -6 l 16 -6 Z" />
+      <path d="M 500 686 l 5 13 l 13 5 l -13 5 l -5 13 l -5 -13 l -13 -5 l 13 -5 Z" />
+    </g>
+  </g>
+  <g data-when="write" class="variant">
+    <path d="M 348 728 C 358 722 374 722 382 726" stroke="#33261d" stroke-width="7" stroke-linecap="round" fill="none" />
+    <path d="M 440 728 C 430 722 414 722 406 726" stroke="#33261d" stroke-width="7" stroke-linecap="round" fill="none" />
+    <path d="M 378 800 C 388 808 402 808 412 800" stroke="#8b4634" stroke-width="7" stroke-linecap="round" fill="none" />
+  </g>
+  <g data-when="pose" class="variant">
+    <path d="M 348 726 C 358 716 374 714 382 720" stroke="#33261d" stroke-width="7" stroke-linecap="round" fill="none" />
+    <path d="M 440 726 C 430 716 414 714 406 720" stroke="#33261d" stroke-width="7" stroke-linecap="round" fill="none" />
+    <path d="M 376 798 C 388 812 404 812 414 798" stroke="#8b4634" stroke-width="7" stroke-linecap="round" fill="none" />
+  </g>
+</g>
+<!-- ═══ Mother ══════════════════════════════════════════════════════════════ -->
+<g id="mother" data-expr="warm">
+  <ellipse cx="716" cy="694" rx="108" ry="100" fill="#241a16" />
+  <circle cx="826" cy="636" r="42" fill="#241a16" />
+  <path d="M 806 626 C 826 606 850 616 856 640" stroke="#3b2b23" stroke-width="9" stroke-linecap="round" fill="none" />
+
+  <rect x="696" y="792" width="42" height="76" rx="20" fill="#b87a4e" />
+  <path d="M 648 892 C 648 866 676 858 716 858 C 756 858 784 866 784 892 L 802 1104 L 630 1104 Z" fill="#447f79" />
+  <path d="M 686 860 L 716 900 L 746 860 C 732 852 700 852 686 860 Z" fill="#5f9d96" />
+  <path d="M 622 884 C 598 940 598 1016 606 1090 L 662 1090 C 652 1016 652 942 666 890 Z" fill="#3f7d78" />
+  <path d="M 606 1090 L 662 1090 L 660 1104 L 604 1104 Z" fill="#d99b3d" />
+
+  <ellipse cx="716" cy="732" rx="94" ry="90" fill="#c98a5b" />
+  <ellipse cx="626" cy="744" rx="16" ry="22" fill="#bd7f52" />
+  <ellipse cx="806" cy="744" rx="16" ry="22" fill="#bd7f52" />
+  <circle cx="716" cy="682" r="8" fill="#b03a2e" />
+  <path d="M 628 704 C 646 660 680 646 716 646 C 754 646 784 664 802 706 C 774 680 744 672 716 672 C 688 672 656 682 628 704 Z" fill="#2e2119" />
+  <g fill="#e8b34f">
+    <circle cx="622" cy="782" r="11" />
+    <circle cx="810" cy="782" r="11" />
+    <circle cx="622" cy="802" r="6" />
+    <circle cx="810" cy="802" r="6" />
+  </g>
+
+  <ellipse cx="686" cy="736" rx="18" ry="20" fill="#fffdf8" />
+  <ellipse cx="752" cy="736" rx="18" ry="20" fill="#fffdf8" />
+  <g id="m-pupils">
+    <circle cx="688" cy="740" r="9" fill="#241a16" />
+    <circle cx="754" cy="740" r="9" fill="#241a16" />
+    <circle cx="691" cy="736" r="3" fill="#ffffff" />
+    <circle cx="757" cy="736" r="3" fill="#ffffff" />
+  </g>
+
+  <g data-when="warm" class="variant">
+    <path d="M 664 706 C 674 696 692 696 700 704" stroke="#2e2119" stroke-width="7" stroke-linecap="round" fill="none" />
+    <path d="M 770 706 C 760 696 742 696 734 704" stroke="#2e2119" stroke-width="7" stroke-linecap="round" fill="none" />
+    <path d="M 694 780 C 706 794 728 794 740 780" stroke="#8b4634" stroke-width="7" stroke-linecap="round" fill="none" />
+    <path d="M 648 768 C 640 776 642 786 650 788" stroke="#a86a44" stroke-width="6" stroke-linecap="round" fill="none" />
+    <path d="M 786 768 C 794 776 792 786 784 788" stroke="#a86a44" stroke-width="6" stroke-linecap="round" fill="none" />
+  </g>
+  <g data-when="talk" class="variant">
+    <path d="M 662 702 C 672 690 692 690 700 700" stroke="#2e2119" stroke-width="7" stroke-linecap="round" fill="none" />
+    <path d="M 772 702 C 762 690 742 690 734 700" stroke="#2e2119" stroke-width="7" stroke-linecap="round" fill="none" />
+    <ellipse cx="716" cy="782" rx="16" ry="12" fill="#8b4634" />
+  </g>
+  <g data-when="proud" class="variant">
+    <path d="M 662 706 C 672 696 692 696 700 704" stroke="#2e2119" stroke-width="7" stroke-linecap="round" fill="none" />
+    <path d="M 772 706 C 762 696 742 696 734 704" stroke="#2e2119" stroke-width="7" stroke-linecap="round" fill="none" />
+    <path d="M 690 776 C 702 798 732 798 744 776 Z" fill="#8b4634" />
+    <path d="M 700 782 C 710 792 722 792 732 782 Z" fill="#f2a0a0" />
+  </g>
+  <g data-when="hug" class="variant">
+    <path d="M 664 710 C 674 702 692 702 700 708" stroke="#2e2119" stroke-width="7" stroke-linecap="round" fill="none" />
+    <path d="M 770 710 C 760 702 742 702 734 708" stroke="#2e2119" stroke-width="7" stroke-linecap="round" fill="none" />
+    <path d="M 696 784 C 708 794 726 794 738 784" stroke="#8b4634" stroke-width="7" stroke-linecap="round" fill="none" />
+  </g>
+</g>
+<!-- ═══ Desk + props ════════════════════════════════════════════════════════ -->
+<g id="desk">
+  <rect x="0" y="1152" width="1080" height="220" fill="#a9743f" />
+  <path d="M 0 1108 Q 540 1084 1080 1108 L 1080 1160 L 0 1160 Z" fill="url(#deskGrad)" />
+  <path d="M 0 1108 Q 540 1084 1080 1108" stroke="#e2b280" stroke-width="7" fill="none" />
+
+  <g id="worksheet" transform="rotate(-3 240 1050)">
+    <rect x="96" y="1002" width="292" height="98" rx="10" fill="#fffdf6" stroke="#e4d8c2" stroke-width="4" />
+    <circle cx="140" cy="1032" r="13" fill="#f6c15a" />
+    <path d="M 186 1050 L 186 1020" stroke="#5aa06a" stroke-width="6" stroke-linecap="round" />
+    <ellipse cx="174" cy="1030" rx="13" ry="8" fill="#68b377" />
+    <ellipse cx="198" cy="1040" rx="13" ry="8" fill="#68b377" />
+    <g stroke="#e0d6c0" stroke-width="5" stroke-linecap="round">
+      <path d="M 226 1030 L 356 1030" />
+      <path d="M 226 1050 L 300 1050" />
+      <path d="M 126 1074 L 330 1074" stroke-dasharray="12 12" />
+    </g>
+  </g>
+
+  <g id="pencil">
+    <rect x="398" y="1046" width="86" height="15" rx="7" fill="#f2b23e" transform="rotate(-22 441 1053)" />
+    <path d="M 480 1034 L 496 1028 L 486 1046 Z" fill="#f7e0b0" transform="rotate(-22 441 1053)" />
+    <path d="M 492 1025 L 500 1022 L 495 1032 Z" fill="#3a2b22" transform="rotate(-22 441 1053)" />
+  </g>
+
+  <g id="chai">
+    <ellipse cx="624" cy="1096" rx="52" ry="14" fill="#d0c2a8" />
+    <path d="M 592 1058 L 656 1058 L 648 1092 L 600 1092 Z" fill="#f3ece0" />
+    <path d="M 592 1058 L 656 1058 L 652 1074 L 596 1074 Z" fill="#e7dccb" />
+    <ellipse cx="624" cy="1058" rx="32" ry="10" fill="#b07a4a" />
+    <path d="M 656 1066 C 676 1066 676 1084 656 1084" stroke="#f3ece0" stroke-width="9" fill="none" />
+    <g stroke="#d8cbb6" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.85">
+      <path d="M 614 1044 C 606 1032 622 1026 614 1012" />
+      <path d="M 638 1044 C 630 1032 646 1026 638 1012" />
+    </g>
+  </g>
+
+  <g id="water-glass">
+    <path d="M 890 1010 L 962 1010 L 952 1096 L 900 1096 Z" fill="#e8f2f7" opacity="0.9" />
+    <path d="M 896 1032 L 956 1032 L 952 1096 L 900 1096 Z" fill="#bcdcea" opacity="0.85" />
+    <rect x="886" y="1004" width="80" height="10" rx="5" fill="#dbe9f0" />
+  </g>
+</g>
+
+<!-- ═══ Arms / hands (drawn over the desk) ═════════════════════════════════ -->
+<g id="daughter-arms" data-arm="write">
+  <g data-when="write" class="variant">
+    <path d="M 350 908 C 330 980 340 1046 380 1076" stroke="#e8a13a" stroke-width="34" stroke-linecap="round" fill="none" />
+    <path d="M 440 908 C 458 968 452 1020 424 1058" stroke="#e8a13a" stroke-width="34" stroke-linecap="round" fill="none" />
+    <circle cx="386" cy="1080" r="21" fill="#d9a273" />
+    <circle cx="420" cy="1064" r="21" fill="#d9a273" />
+    <rect x="414" y="1042" width="68" height="14" rx="7" fill="#f2b23e" transform="rotate(-34 448 1049)" />
+  </g>
+  <g data-when="idle" class="variant">
+    <path d="M 350 908 C 330 980 340 1044 378 1074" stroke="#e8a13a" stroke-width="34" stroke-linecap="round" fill="none" />
+    <path d="M 440 908 C 458 968 450 1038 424 1072" stroke="#e8a13a" stroke-width="34" stroke-linecap="round" fill="none" />
+    <circle cx="384" cy="1078" r="21" fill="#d9a273" />
+    <circle cx="428" cy="1076" r="21" fill="#d9a273" />
+  </g>
+  <g data-when="chin" class="variant">
+    <path d="M 350 908 C 330 980 340 1044 378 1074" stroke="#e8a13a" stroke-width="34" stroke-linecap="round" fill="none" />
+    <path d="M 442 908 C 486 918 492 872 452 846" stroke="#e8a13a" stroke-width="34" stroke-linecap="round" fill="none" />
+    <circle cx="384" cy="1078" r="21" fill="#d9a273" />
+    <circle cx="446" cy="842" r="21" fill="#d9a273" />
+  </g>
+  <g data-when="raise" class="variant">
+    <path d="M 350 908 C 336 972 344 1030 372 1064" stroke="#e8a13a" stroke-width="34" stroke-linecap="round" fill="none" />
+    <path d="M 442 908 C 470 900 462 866 430 852" stroke="#e8a13a" stroke-width="34" stroke-linecap="round" fill="none" />
+    <circle cx="376" cy="1070" r="21" fill="#d9a273" />
+    <circle cx="424" cy="846" r="21" fill="#d9a273" />
+  </g>
+</g>
+
+<g id="mother-arms" data-arm="desk">
+  <g data-when="desk" class="variant">
+    <path d="M 652 908 C 634 972 644 1030 678 1058" stroke="#447f79" stroke-width="36" stroke-linecap="round" fill="none" />
+    <path d="M 780 908 C 800 966 792 1020 760 1050" stroke="#447f79" stroke-width="36" stroke-linecap="round" fill="none" />
+    <circle cx="686" cy="1064" r="22" fill="#c98a5b" />
+    <circle cx="752" cy="1056" r="22" fill="#c98a5b" />
+  </g>
+  <g data-when="point" class="variant">
+    <path d="M 780 908 C 800 966 792 1020 760 1050" stroke="#447f79" stroke-width="36" stroke-linecap="round" fill="none" />
+    <circle cx="752" cy="1056" r="22" fill="#c98a5b" />
+    <path d="M 654 910 C 604 942 570 992 552 1036" stroke="#447f79" stroke-width="36" stroke-linecap="round" fill="none" />
+    <circle cx="548" cy="1044" r="22" fill="#c98a5b" />
+    <path d="M 532 1064 L 508 1096" stroke="#c98a5b" stroke-width="18" stroke-linecap="round" />
+  </g>
+  <g data-when="hug" class="variant">
+    <path d="M 780 908 C 800 966 792 1020 760 1050" stroke="#447f79" stroke-width="36" stroke-linecap="round" fill="none" />
+    <circle cx="752" cy="1056" r="22" fill="#c98a5b" />
+    <path d="M 700 906 C 632 900 540 916 486 948" stroke="#447f79" stroke-width="36" stroke-linecap="round" fill="none" />
+    <circle cx="474" cy="954" r="22" fill="#c98a5b" />
+  </g>
+</g>
+<!-- ═══ Laptop (foreground, screen facing the camera) ══════════════════════ -->
+<g id="laptop" data-state="idle" filter="url(#softShadow)">
+  <clipPath id="screenInnerClip">
+    <path d="M 336 1166 L 744 1166 L 788 1448 L 292 1448 Z" />
+  </clipPath>
+
+  <path d="M 322 1152 L 758 1152 L 806 1462 L 274 1462 Z" fill="#3c4550" stroke="#3c4550" stroke-width="18" stroke-linejoin="round" />
+  <path d="M 336 1166 L 744 1166 L 788 1448 L 292 1448 Z" fill="url(#screenGrad)" />
+
+  <g clip-path="url(#screenInnerClip)">
+    <!-- idle: neutral note-taking surface, no product branding yet -->
+    <g id="screen-idle" opacity="1">
+      <rect x="300" y="1174" width="470" height="54" fill="#e8eef3" />
+      <circle cx="322" cy="1201" r="7" fill="#c3ced7" />
+      <circle cx="344" cy="1201" r="7" fill="#c3ced7" />
+      <circle cx="366" cy="1201" r="7" fill="#c3ced7" />
+      <rect x="330" y="1252" width="300" height="20" rx="10" fill="#d6dfe6" />
+      <rect x="330" y="1292" width="230" height="20" rx="10" fill="#e1e8ee" />
+      <rect x="330" y="1352" width="380" height="62" rx="16" fill="#ffffff" stroke="#dbe3ea" stroke-width="3" />
+      <rect x="350" y="1374" width="180" height="16" rx="8" fill="#e6ecf1" />
+      <rect x="676" y="1374" width="16" height="18" rx="3" fill="#8fb2cd" />
+    </g>
+
+    <!-- her question, typed -->
+    <g id="screen-asking" opacity="0">
+      <rect x="330" y="1250" width="420" height="132" rx="26" fill="#dfe7ee" />
+      <text x="356" y="1300" font-size="33" fill="#333c44" font-family="Arial, Helvetica, sans-serif">Mom, why do plants</text>
+      <text x="356" y="1348" font-size="33" fill="#333c44" font-family="Arial, Helvetica, sans-serif">need sunlight?</text>
+    </g>
+
+    <!-- the "perfect" wall of text -->
+    <g id="screen-answer" opacity="0">
+      <rect x="300" y="1174" width="470" height="46" fill="#dde5ec" />
+      <text x="330" y="1207" font-size="27" fill="#4b5560" font-family="Arial, Helvetica, sans-serif">Photosynthesis — overview</text>
+      <g fill="#c3ccd4">
+        <rect x="330" y="1240" width="400" height="15" rx="7" />
+        <rect x="330" y="1266" width="426" height="15" rx="7" />
+        <rect x="330" y="1292" width="380" height="15" rx="7" />
+        <rect x="330" y="1318" width="418" height="15" rx="7" />
+        <rect x="330" y="1344" width="396" height="15" rx="7" />
+        <rect x="330" y="1370" width="424" height="15" rx="7" />
+        <rect x="330" y="1396" width="356" height="15" rx="7" />
+        <rect x="330" y="1422" width="408" height="15" rx="7" />
+      </g>
+      <rect x="330" y="1240" width="118" height="15" rx="7" fill="#9fb0bd" />
+    </g>
+
+    <!-- AI asks back -->
+    <g id="screen-question" opacity="0">
+      <rect x="322" y="1198" width="440" height="216" rx="26" fill="#ffffff" stroke="#cfd9e2" stroke-width="4" />
+      <text font-size="32" fill="#333c44" font-family="Arial, Helvetica, sans-serif">
+        <tspan x="348" y="1248">What do you think</tspan>
+        <tspan x="348" y="1292">happens to a plant</tspan>
+        <tspan x="348" y="1336">kept in the dark for</tspan>
+        <tspan x="348" y="1380">a few days?</tspan>
+      </text>
+      <g fill="#a9b8c4">
+        <circle cx="356" cy="1424" r="7" />
+        <circle cx="382" cy="1424" r="7" />
+        <circle cx="408" cy="1424" r="7" />
+      </g>
+    </g>
+
+    <!-- glass sheen -->
+    <path d="M 344 1178 L 470 1178 L 380 1448 L 300 1448 Z" fill="#ffffff" opacity="0.16" />
+  </g>
+
+  <path d="M 250 1462 L 830 1462 L 878 1548 L 202 1548 Z" fill="#cbd4dc" />
+  <path d="M 250 1462 L 830 1462 L 838 1480 L 242 1480 Z" fill="#dfe6ec" />
+  <path d="M 202 1548 L 878 1548 L 872 1568 L 208 1568 Z" fill="#aeb9c4" />
+  <rect x="440" y="1500" width="200" height="16" rx="8" fill="#b9c4cd" />
+</g>
+</g>
+
+<!-- ═══ Overlays (fixed to frame, unaffected by the camera) ════════════════ -->
+<rect id="room-tint" x="0" y="0" width="1080" height="1920" fill="#e6e0d6" opacity="0" />
+<!-- ── s4: answer vs understanding ─────────────────────────────────────────── -->
+<g id="ov-split" class="scene">
+  <rect x="0" y="0" width="1080" height="1920" fill="#f7efe2" opacity="0.94" />
+  <rect x="40" y="290" width="1000" height="1260" rx="56" fill="#fffdf7" filter="url(#softShadow)" />
+  <line x1="540" y1="380" x2="540" y2="1460" stroke="#eadfc8" stroke-width="4" stroke-dasharray="14 14" />
+
+  <text x="290" y="410" font-size="40" font-weight="bold" fill="#9aa0a6" text-anchor="middle" letter-spacing="6" font-family="Arial, Helvetica, sans-serif">AN ANSWER</text>
+  <g fill="#c9ced3">
+    <rect x="110" y="470" width="366" height="17" rx="8" />
+    <rect x="110" y="502" width="386" height="17" rx="8" />
+    <rect x="110" y="534" width="330" height="17" rx="8" />
+    <rect x="110" y="566" width="378" height="17" rx="8" />
+    <rect x="110" y="598" width="348" height="17" rx="8" />
+    <rect x="110" y="630" width="384" height="17" rx="8" />
+    <rect x="110" y="662" width="300" height="17" rx="8" />
+  </g>
+  <rect x="110" y="706" width="152" height="17" rx="8" fill="#9aa0a6" />
+  <g stroke="#c9ced3" stroke-width="8" stroke-linecap="round" fill="none">
+    <path d="M 300 1000 L 300 1240" />
+    <path d="M 300 1130 C 268 1120 246 1098 240 1072" />
+    <path d="M 300 1168 C 332 1158 354 1136 360 1110" />
+  </g>
+  <path d="M 250 1240 L 350 1240 L 338 1320 L 262 1320 Z" fill="#d3d7db" />
+  <text x="290" y="1420" font-size="34" fill="#9aa0a6" text-anchor="middle" font-family="Arial, Helvetica, sans-serif">Sorted. Next question.</text>
+
+  <text x="790" y="410" font-size="40" font-weight="bold" fill="#4f9d5d" text-anchor="middle" letter-spacing="4" font-family="Arial, Helvetica, sans-serif">UNDERSTANDING</text>
+  <circle cx="790" cy="492" r="34" fill="#f6c15a" />
+  <g stroke="#f6c15a" stroke-width="9" stroke-linecap="round">
+    <path d="M 790 434 L 790 416" />
+    <path d="M 790 550 L 790 568" />
+    <path d="M 732 492 L 714 492" />
+    <path d="M 848 492 L 866 492" />
+    <path d="M 750 452 L 737 439" />
+    <path d="M 830 452 L 843 439" />
+  </g>
+  <g stroke="#5aa06a" stroke-width="10" stroke-linecap="round" fill="none">
+    <path d="M 790 1240 L 790 900" />
+    <path d="M 790 1090 C 750 1078 722 1048 716 1012" />
+    <path d="M 790 1040 C 830 1028 858 998 864 962" />
+    <path d="M 790 1150 C 762 1142 742 1120 736 1094" />
+  </g>
+  <g fill="#68b377">
+    <ellipse cx="700" cy="1000" rx="44" ry="24" transform="rotate(-24 700 1000)" />
+    <ellipse cx="880" cy="950" rx="44" ry="24" transform="rotate(24 880 950)" />
+    <ellipse cx="722" cy="1084" rx="34" ry="19" transform="rotate(-30 722 1084)" />
+  </g>
+  <path d="M 740 1240 L 840 1240 L 828 1320 L 752 1320 Z" fill="#d98b5f" />
+  <g opacity="0.85">
+    <rect x="688" y="752" width="322" height="122" rx="28" fill="#eaf6ec" stroke="#bcdcc2" stroke-width="4" />
+    <text x="712" y="798" font-size="27" fill="#3f7d5a" font-family="Arial, Helvetica, sans-serif">Because the leaf uses</text>
+    <text x="712" y="840" font-size="27" fill="#3f7d5a" font-family="Arial, Helvetica, sans-serif">light to make food.</text>
+  </g>
+  <text x="790" y="1420" font-size="34" fill="#4f9d5d" text-anchor="middle" font-family="Arial, Helvetica, sans-serif">She can explain it tomorrow.</text>
+</g>
+<!-- ── s6: thinking sequence (thought bubble) ─────────────────────────────── -->
+<g id="ov-thought" class="scene">
+  <!-- lifted + slightly shrunk so the thought bubble clears both faces -->
+  <g transform="translate(540 470) scale(0.94) translate(-540 -470) translate(0 -76)">
+  <!-- stroke layer then fill layer = clean union outline -->
+  <g fill="none" stroke="#e3d0b4" stroke-width="12">
+    <ellipse cx="540" cy="430" rx="320" ry="190" />
+    <circle cx="270" cy="540" r="68" />
+    <circle cx="810" cy="536" r="74" />
+    <circle cx="540" cy="600" r="56" />
+    <ellipse cx="350" cy="628" r="22" />
+    <ellipse cx="322" cy="678" r="13" />
+  </g>
+  <g fill="url(#thoughtGrad)">
+    <ellipse cx="540" cy="430" rx="320" ry="190" />
+    <circle cx="270" cy="540" r="68" />
+    <circle cx="810" cy="536" r="74" />
+    <circle cx="540" cy="600" r="56" />
+    <ellipse cx="350" cy="628" r="22" />
+    <ellipse cx="322" cy="678" r="13" />
+  </g>
+
+  <clipPath id="thoughtClip">
+    <rect x="230" y="250" width="620" height="340" rx="40" />
+  </clipPath>
+  <g clip-path="url(#thoughtClip)">
+    <!-- the plant that stays in the dark -->
+    <g id="think-dark">
+      <rect x="330" y="262" width="420" height="330" fill="#2f3550" />
+      <rect x="330" y="262" width="420" height="42" fill="#242a42" />
+      <text x="356" y="292" font-size="26" fill="#b9c4dd" font-family="Arial, Helvetica, sans-serif">Day 3 — cupboard, no light</text>
+      <g stroke="#8d9a74" stroke-width="12" stroke-linecap="round" fill="none">
+        <path d="M 540 560 L 540 430 C 540 400 512 396 500 418" />
+        <path d="M 540 470 C 578 462 596 440 596 418" />
+      </g>
+      <ellipse cx="494" cy="428" rx="34" ry="18" transform="rotate(28 494 428)" fill="#8d9a74" />
+      <ellipse cx="602" cy="412" rx="34" ry="18" transform="rotate(-30 602 412)" fill="#8d9a74" />
+      <path d="M 494 560 L 586 560 L 574 604 L 506 604 Z" fill="#6d5a4a" />
+    </g>
+
+    <!-- light returns -->
+    <g id="think-light" opacity="0">
+      <rect x="330" y="262" width="420" height="330" fill="#eef6ea" />
+      <polygon points="330,262 560,262 330,470" fill="#ffe6a8" opacity="0.7" />
+      <polygon points="640,262 750,262 750,400" fill="#ffe6a8" opacity="0.55" />
+      <circle cx="690" cy="322" r="34" fill="#f6c15a" />
+      <g stroke="#5aa06a" stroke-width="12" stroke-linecap="round" fill="none">
+        <path d="M 540 560 L 540 400" />
+        <path d="M 540 470 C 578 456 596 428 596 400" />
+        <path d="M 540 420 C 502 406 484 378 484 350" />
+      </g>
+      <g fill="#68b377">
+        <ellipse cx="604" cy="392" rx="36" ry="19" transform="rotate(-32 604 392)" />
+        <ellipse cx="476" cy="342" rx="36" ry="19" transform="rotate(32 476 342)" />
+      </g>
+      <path d="M 494 560 L 586 560 L 574 604 L 506 604 Z" fill="#d98b5f" />
+      <g fill="#f6c15a">
+        <path d="M 430 330 l 5 13 l 13 5 l -13 5 l -5 13 l -5 -13 l -13 -5 l 13 -5 Z" />
+        <path d="M 646 480 l 5 13 l 13 5 l -13 5 l -5 13 l -5 -13 l -13 -5 l 13 -5 Z" />
+      </g>
+    </g>
+  </g>
+
+  <rect x="270" y="524" width="540" height="46" rx="23" fill="#fffdf7" stroke="#e6d6bd" stroke-width="4" />
+  <text id="think-label" x="540" y="556" font-size="28" fill="#6b6357" text-anchor="middle" font-family="Arial, Helvetica, sans-serif">it needs light to make its own food</text>
+  </g>
+</g>
+<!-- ── s7/s8: message cards ───────────────────────────────────────────────── -->
+<g id="ov-cards" class="scene">
+  <rect id="card-bg" x="0" y="0" width="1080" height="1920" fill="#fdf6ea" opacity="0.62" />
+  <text id="card-text" font-size="64" font-weight="bold" fill="#2f2a24" text-anchor="middle" font-family="Arial, Helvetica, sans-serif">
+    <tspan id="card-t1" x="540" y="800">AI shouldn't do</tspan>
+    <tspan id="card-t2" x="540" y="884">your child's thinking.</tspan>
+  </text>
+  <g id="card-icon" opacity="0">
+    <ellipse cx="500" cy="1010" rx="54" ry="46" fill="#eaa9c0" />
+    <ellipse cx="580" cy="1010" rx="54" ry="46" fill="#eaa9c0" />
+    <g stroke="#c97a95" stroke-width="8" stroke-linecap="round" fill="none">
+      <path d="M 496 1000 C 512 986 520 1004 536 990" />
+      <path d="M 540 1018 C 556 1004 566 1022 582 1008" />
+      <path d="M 520 1066 C 528 1082 552 1082 560 1066" />
+      <path d="M 540 1062 L 540 1090" />
+    </g>
+  </g>
+</g>
+
+<!-- ── s8: brand frame (the only place the product name appears) ─────────── -->
+<g id="ov-brand" class="scene">
+  <rect x="0" y="0" width="1080" height="1920" fill="url(#brandGrad)" />
+  <circle cx="540" cy="940" r="330" fill="url(#warmGlow)" />
+  <g filter="url(#softShadow)">
+    <path d="M 372 1074 C 372 1184 452 1240 540 1240 C 628 1240 708 1184 708 1074 Z" fill="#d9a273" />
+    <g stroke="#b8823f" stroke-width="6" fill="none" opacity="0.6">
+      <path d="M 384 1104 C 460 1132 620 1132 696 1104" />
+      <path d="M 396 1144 C 466 1168 614 1168 684 1144" />
+      <path d="M 424 1186 C 480 1206 600 1206 656 1186" />
+    </g>
+    <circle cx="466" cy="1092" r="24" fill="#fff4dd" />
+    <circle cx="540" cy="1100" r="26" fill="#fff4dd" />
+    <circle cx="614" cy="1092" r="24" fill="#fff4dd" />
+
+    <path d="M 468 958 L 486 898 L 532 936 Z" fill="#8a6b4f" />
+    <path d="M 612 958 L 594 898 L 548 936 Z" fill="#8a6b4f" />
+    <ellipse cx="540" cy="1004" rx="72" ry="84" fill="#8a6b4f" />
+    <ellipse cx="540" cy="1032" rx="46" ry="56" fill="#e8d3b8" />
+    <circle cx="508" cy="982" r="24" fill="#fffdf8" />
+    <circle cx="572" cy="982" r="24" fill="#fffdf8" />
+    <circle cx="510" cy="986" r="11" fill="#241a16" />
+    <circle cx="574" cy="986" r="11" fill="#241a16" />
+    <path d="M 540 1000 L 518 1012 L 540 1026 L 562 1012 Z" fill="#f2b23e" />
+  </g>
+  <text x="540" y="1360" font-size="100" font-weight="bold" fill="#2f2a24" text-anchor="middle" font-family="Arial, Helvetica, sans-serif">AmigosNest</text>
+  <text x="540" y="1442" font-size="42" fill="#6b6357" text-anchor="middle" font-family="Arial, Helvetica, sans-serif">An AI thinking companion for kids.</text>
+</g>
+
+<!-- ── hook (s1 only) ─────────────────────────────────────────────────────── -->
+<g id="hook" class="scene">
+  <rect x="66" y="186" width="760" height="98" rx="26" fill="#fffdf7" opacity="0.92" filter="url(#softShadow)" />
+  <text x="100" y="252" font-size="48" font-weight="bold" fill="#2f2a24" font-family="Arial, Helvetica, sans-serif">Why do plants need sunlight?</text>
+</g>
+
+<!-- ── captions ───────────────────────────────────────────────────────────── -->
+<g id="captions" class="scene">
+  <rect x="70" y="1496" width="940" height="172" rx="34" fill="#1f1a14" opacity="0.86" />
+  <text id="cap-speaker" x="112" y="1546" font-size="26" font-weight="bold" letter-spacing="4" fill="#e8b34f" font-family="Arial, Helvetica, sans-serif">DAUGHTER</text>
+  <text font-size="42" fill="#fdf6ea" font-family="Arial, Helvetica, sans-serif">
+    <tspan id="cap-t1" x="112" y="1606">Mom… why do plants need sunlight?</tspan>
+    <tspan id="cap-t2" x="112" y="1660"></tspan>
+  </text>
+</g>
+
+<rect x="0" y="0" width="1080" height="1920" fill="url(#vignetteGrad)" pointer-events="none" />
+<rect id="preroll" x="0" y="0" width="1080" height="1920" fill="#000000" />
+</svg>
+</div>
+<script src="timeline.js"></script>
+<script>
+/* ─────────────────────────────────────────────────────────────────────────────
+   Stage renderer.
+
+   The page owns no story decisions. Everything it shows is derived from the cue
+   list in window.__AMIGOS_TIMELINE__ (written by scripts/social-video/render.mjs
+   from scripts/social-video/{lines,direction}.mjs), which means the picture, the
+   voiceover and the sound effects always agree on the same clock.
+
+   API used by the recorder:
+     window.__amigos.ready          true once the timeline is loaded
+     window.__amigos.play()         start from -preroll (black)
+     window.__amigos.seek(t, on)    jump to t seconds, optionally with no tween
+   ───────────────────────────────────────────────────────────────────────────── */
+(function () {
+  const params = new URLSearchParams(location.search);
+  const timeline = window.__AMIGOS_TIMELINE__ || {
+    target: 32,
+    preroll: 1.5,
+    fps: 30,
+    cardCopy: {
+      s7: [
+        { l1: "AI shouldn't do", l2: "your child's thinking.", icon: false, bg: 0.62 },
+        { l1: "It should help them think.", l2: "", icon: true, bg: 0.72 },
+      ],
+      s8: [{ l1: "AmigosNest", l2: "An AI thinking companion for kids.", brand: true }],
+    },
+    // Degraded preview when timeline.js is missing: 4s per scene, no dialogue.
+    scenes: ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8"].map((id, i) => ({
+      id,
+      start: i * 4,
+      duration: 4,
+    })),
+    cues: [],
+    events: [],
+    warnings: ["timeline.js missing — run: npm run video:social:timeline"],
+  };
+
+  const el = (id) => document.getElementById(id);
+  const nodes = {
+    stage: el("stage"),
+    camera: el("camera"),
+    daughter: el("daughter"),
+    daughterArms: el("daughter-arms"),
+    mother: el("mother"),
+    motherArms: el("mother-arms"),
+    pupilsD: el("d-pupils"),
+    pupilsM: el("m-pupils"),
+    laptop: el("laptop"),
+    tint: el("room-tint"),
+    thinkLight: el("think-light"),
+    thinkLabel: el("think-label"),
+    captions: el("captions"),
+    capSpeaker: el("cap-speaker"),
+    capT1: el("cap-t1"),
+    capT2: el("cap-t2"),
+    hook: el("hook"),
+    split: el("ov-split"),
+    thought: el("ov-thought"),
+    cards: el("ov-cards"),
+    brand: el("ov-brand"),
+    cardBg: el("card-bg"),
+    cardText: el("card-text"),
+    cardT1: el("card-t1"),
+    cardT2: el("card-t2"),
+    cardIcon: el("card-icon"),
+    brandTitle: document.querySelector("#ov-brand text"),
+    brandTagline: document.querySelectorAll("#ov-brand text")[1],
+    preroll: el("preroll"),
+  };
+
+  const SPEAKER_COLORS = {
+    daughter: "#f0a94a",
+    mother: "#7fd0c8",
+    ai: "#b8bdf0",
+    narrator: "#e8d3b8",
+  };
+
+  const overlayNodes = {
+    hook: nodes.hook,
+    split: nodes.split,
+    thought: nodes.thought,
+    cards: nodes.cards,
+    brand: nodes.brand,
+  };
+
+  // ── helpers ────────────────────────────────────────────────────────────────
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const easeInOutSine = (t) => -(Math.cos(Math.PI * t) - 1) / 2;
+
+  /** Greedy word wrap into at most `maxLines`, with a smaller-font fallback. */
+  function wrap(text, maxChars, maxLines) {
+    const words = String(text).split(/\s+/);
+    const lines = [];
+    let line = "";
+    for (const word of words) {
+      const candidate = line ? `${line} ${word}` : word;
+      if (candidate.length > maxChars && line) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = candidate;
+      }
+    }
+    if (line) lines.push(line);
+    if (lines.length > maxLines) return wrap(text, maxChars + 14, maxLines);
+    return lines;
+  }
+
+  // ── state derived from the cue list (stateless, so seeking is exact) ───────
+  const camCues = timeline.cues.filter((c) => c.kind === "camera");
+
+  // The room art carries ART_BLEED px of extra wall/floor on every side. Clamp
+  // the framing to that margin so a future camera move can never reveal the edge.
+  const ART_BLEED = 400;
+  const ART_W = 1080;
+  const ART_H = 1920;
+
+  function cameraAt(t) {
+    let pos = { x: 540, y: 960, scale: 1 };
+    for (const cue of camCues) {
+      if (cue.at > t) break;
+      const { x, y, scale, dur } = cue.value;
+      if (!dur || dur <= 0.002) {
+        pos = { x, y, scale };
+        continue;
+      }
+      const p = clamp((t - cue.at) / dur, 0, 1);
+      const e = easeInOutSine(p);
+      pos = { x: lerp(pos.x, x, e), y: lerp(pos.y, y, e), scale: lerp(pos.scale, scale, e) };
+      if (p < 1) break;
+    }
+    pos.scale = clamp(pos.scale, 1, 1.6);
+    const safeX = (ART_W / 2 + ART_BLEED) * pos.scale;
+    const safeY = (ART_H / 2 + ART_BLEED) * pos.scale;
+    pos.x = clamp(pos.x, ART_W - safeX, safeX);
+    pos.y = clamp(pos.y, ART_H - safeY, safeY);
+    return pos;
+  }
+
+  function stateAt(t) {
+    const state = {
+      expr: { daughter: "write", mother: "warm" },
+      arm: { daughter: "write", mother: "desk" },
+      laptop: "idle",
+      tint: 0,
+      think: { light: 0, label: "" },
+      caption: null,
+      overlays: { hook: false, split: false, thought: false, cards: false, brand: false },
+      card: null,
+      pulseAt: -99,
+    };
+    for (const cue of timeline.cues) {
+      if (cue.at > t) break;
+      const v = cue.value;
+      switch (cue.kind) {
+        case "expr":
+          state.expr[v.who] = v.expr;
+          if (v.arm) state.arm[v.who] = v.arm;
+          break;
+        case "laptop":
+          state.laptop = v.state;
+          break;
+        case "tint":
+          state.tint = v.value;
+          break;
+        case "think":
+          state.think.light = v.light;
+          if (v.label) state.think.label = v.label;
+          break;
+        case "overlay":
+          state.overlays[v.name] = v.on;
+          break;
+        case "caption":
+          state.caption = v;
+          break;
+        case "captionEnd":
+          state.caption = null;
+          break;
+        case "card":
+          state.card = v;
+          break;
+        case "sfxVisual":
+          if (v.pulse) state.pulseAt = cue.at;
+          break;
+        default:
+          break;
+      }
+    }
+    return state;
+  }
+
+  // ── apply ─────────────────────────────────────────────────────────────────
+  const last = { exprD: "", exprM: "", armD: "", armM: "", laptop: "", label: "", card: "", pulse: false };
+
+  // Card copy arrives pre-split into two lines, but the second line can be empty
+  // (a short line reads better uncut). Font size steps down so a long line never
+  // touches the safe area, and the block stays optically centred either way.
+  function applyCard(copy) {
+    if (!copy) return;
+    if (copy.brand) {
+      nodes.brandTitle.textContent = copy.l1;
+      nodes.brandTagline.textContent = copy.l2;
+      return;
+    }
+    const lines = [copy.l1, copy.l2].filter((line) => line && line.length);
+    const longest = Math.max(...lines.map((line) => line.length), 1);
+    const size = Math.max(40, Math.min(64, Math.floor(880 / (0.5 * longest))));
+    const centre = copy.icon ? 742 : 842;
+    nodes.cardText.setAttribute("font-size", String(size));
+    nodes.cardT1.textContent = lines[0] ?? "";
+    nodes.cardT2.textContent = lines[1] ?? "";
+    nodes.cardT1.setAttribute("y", String(lines.length > 1 ? centre - 42 : centre + 22));
+    nodes.cardT2.setAttribute("y", String(centre + 42));
+    nodes.cardIcon.style.opacity = copy.icon ? "1" : "0";
+    if (typeof copy.bg === "number") nodes.cardBg.style.opacity = String(copy.bg);
+  }
+
+  function applyCaption(caption) {
+    if (!caption) {
+      if (nodes.captions.style.opacity !== "0") nodes.captions.style.opacity = "0";
+      return;
+    }
+    nodes.captions.style.opacity = "1";
+    nodes.capSpeaker.textContent = caption.speaker.toUpperCase();
+    nodes.capSpeaker.setAttribute("fill", SPEAKER_COLORS[caption.speaker] ?? "#e8b34f");
+    const lines = wrap(caption.text, 40, 2);
+    nodes.capT1.textContent = lines[0] ?? "";
+    nodes.capT2.textContent = lines[1] ?? "";
+  }
+
+  function applyState(t, state) {
+    const cam = cameraAt(t);
+    nodes.camera.setAttribute(
+      "transform",
+      `translate(${cam.x.toFixed(2)} ${cam.y.toFixed(2)}) scale(${cam.scale.toFixed(4)}) translate(-540 -960)`,
+    );
+
+    if (state.expr.daughter !== last.exprD) {
+      nodes.daughter.setAttribute("data-expr", state.expr.daughter);
+      last.exprD = state.expr.daughter;
+    }
+    if (state.expr.mother !== last.exprM) {
+      nodes.mother.setAttribute("data-expr", state.expr.mother);
+      last.exprM = state.expr.mother;
+    }
+    if (state.arm.daughter !== last.armD) {
+      nodes.daughterArms.setAttribute("data-arm", state.arm.daughter);
+      last.armD = state.arm.daughter;
+    }
+    if (state.arm.mother !== last.armM) {
+      nodes.motherArms.setAttribute("data-arm", state.arm.mother);
+      last.armM = state.arm.mother;
+    }
+    if (state.laptop !== last.laptop) {
+      nodes.laptop.setAttribute("data-state", state.laptop);
+      last.laptop = state.laptop;
+    }
+
+    nodes.tint.style.opacity = String(state.tint);
+    nodes.thinkLight.style.opacity = String(state.think.light);
+    if (state.think.label && state.think.label !== last.label) {
+      nodes.thinkLabel.textContent = state.think.label;
+      last.label = state.think.label;
+    }
+
+    // eyes follow the moment: up when thinking/asking, down when reading
+    const pupilY = state.expr.daughter === "think" || state.expr.daughter === "asking" ? -4 : state.expr.daughter === "flat" ? 1 : 0;
+    nodes.pupilsD.setAttribute("transform", `translate(0 ${pupilY})`);
+    nodes.pupilsM.setAttribute("transform", state.expr.mother === "talk" ? "translate(-4 -1)" : "translate(0 0)");
+
+    for (const [name, node] of Object.entries(overlayNodes)) {
+      const on = Boolean(state.overlays[name]);
+      const value = on ? "1" : "0";
+      if (node.style.opacity !== value) node.style.opacity = value;
+    }
+
+    applyCaption(state.caption);
+
+    const cardKey = state.card ? `${state.card.scene}:${state.card.index}` : "";
+    if (cardKey !== last.card) {
+      last.card = cardKey;
+      if (state.card) {
+        const copy = (timeline.cardCopy?.[state.card.scene] ?? [])[state.card.index];
+        applyCard(copy);
+      }
+    }
+
+    const pulsing = t >= state.pulseAt && t - state.pulseAt < 0.32;
+    if (pulsing !== last.pulse) {
+      last.pulse = pulsing;
+      nodes.laptop.classList.toggle("pulse", pulsing);
+    }
+  }
+
+  // ── clock ─────────────────────────────────────────────────────────────────
+  let startedAt = null;
+  let done = false;
+
+  function render(t) {
+    nodes.preroll.style.opacity = t < 0 ? "1" : "0";
+    const now = Math.max(t, 0);
+    applyState(now, stateAt(now));
+    if (!done && t >= timeline.target + 0.35) {
+      done = true;
+      window.__AMIGOS_DONE__ = true;
+    }
+  }
+
+  function tick() {
+    if (startedAt !== null) render((performance.now() - startedAt) / 1000 - timeline.preroll);
+    requestAnimationFrame(tick);
+  }
+
+  function setInstant(on) {
+    document.body.classList.toggle("instant", on);
+  }
+
+  window.__amigos = {
+    ready: true,
+    timeline,
+    play() {
+      setInstant(false);
+      last.card = "";
+      startedAt = performance.now();
+      render(-timeline.preroll);
+    },
+    pause() {
+      startedAt = null;
+    },
+    seek(t, instant) {
+      startedAt = null;
+      setInstant(Boolean(instant));
+      if (instant) void document.body.offsetWidth;
+      render(t);
+    },
+  };
+
+  // ── local preview conveniences (?scale=, ?time=, ?scene=) ─────────────────
+  const scaleParam = params.get("scale");
+  const scale =
+    scaleParam !== null
+      ? Number(scaleParam)
+      : window.innerHeight >= 1900 && window.innerWidth >= 1070
+        ? 1
+        : Math.min(1, (window.innerHeight - 16) / 1920, (window.innerWidth - 16) / 1080);
+  nodes.stage.style.transform = `scale(${scale})`;
+
+  if (timeline.warnings?.length) console.warn("[amigosnest] " + timeline.warnings.join("\n[amigosnest] "));
+
+  const seekParam = params.get("time");
+  const sceneParam = params.get("scene");
+  if (seekParam !== null) window.__amigos.seek(Number(seekParam), true);
+  else if (sceneParam) {
+    const scene = timeline.scenes.find((s) => s.id === sceneParam);
+    if (scene) window.__amigos.seek(scene.start + scene.duration * 0.55, true);
+  } else if (params.get("pause") === "1") {
+    window.__amigos.seek(0, true);
+  }
+
+  requestAnimationFrame(tick);
+})();
+
+</script>
+</body>
+</html>

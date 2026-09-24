@@ -1,0 +1,16 @@
+AmigosNest 35s social video — audio placeholder specs (no fake voice).
+
+Dialogue (record as 44.1kHz mono WAV, one file per line):
+
+video/audio/01-daughter.wav  @0.5s   Daughter: "Mom, why does an elephant have such a long trunk?"
+video/audio/02-mother.wav    @5.2s   Mother:   "Hmm... what do you think?"
+video/audio/03-daughter.wav  @9.3s   Daughter: "Maybe... it helps the elephant reach things?"
+video/audio/04-mother.wav    @14.4s  Mother:   "Yes. What else could it help with?"
+video/audio/05-daughter.wav  @19.3s  Daughter: "It can drink, pick up food... and even touch things!"
+
+Music bed (optional, your own royalty-free file only):
+
+video/audio/music.m4a  24-30s product + 30-35s message stay music-only by design.
+Keep music warm/gentle/optimistic, well under dialogue level. No cinematic drama.
+
+Current QC cut is silent AAC by design — no synthesised voice, no stock music.
