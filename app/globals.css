@@ -3,6 +3,9 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  /* The app is designed light-only: tell the browser so macOS dark mode
+     does not paint native form controls dark (white text on white bg). */
+  color-scheme: light;
 }
 
 @theme inline {
@@ -23,4 +26,12 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Keep form controls readable when the OS is in dark mode (macOS Safari
+   otherwise inherits near-white text into light inputs/buttons). */
+input,
+textarea,
+select {
+  color-scheme: light;
 }

@@ -182,7 +182,7 @@ export default function ParentPage() {
       {/* Upload Card */}
       <div className="bg-white max-w-2xl mx-auto p-8 rounded-3xl shadow-lg">
 
-        <h2 className="text-2xl font-bold mb-4">
+        <h2 className="text-2xl font-bold mb-4 text-gray-800">
           📄 Upload Learning Material
         </h2>
 
@@ -199,7 +199,7 @@ export default function ParentPage() {
               e.target.files?.[0] || null
             )
           }
-          className="mb-6"
+          className="mb-6 text-slate-700 [color-scheme:light]"
         />
 
         <button
@@ -236,7 +236,7 @@ export default function ParentPage() {
               onChange={(e) => setReviewText(e.target.value)}
               rows={12}
               aria-label="Review extracted worksheet text"
-              className="mt-3 w-full rounded-xl border border-amber-300 p-3 text-sm text-gray-800"
+              className="mt-3 w-full rounded-xl border border-amber-300 bg-white p-3 text-sm text-gray-900 [color-scheme:light]"
             />
             <button
               onClick={approveReview}
@@ -306,7 +306,7 @@ export default function ParentPage() {
                         doc.name
                       )
                     }
-                    className="bg-yellow-400 px-4 py-2 rounded-full shadow hover:bg-yellow-500"
+                    className="bg-yellow-400 px-4 py-2 rounded-full text-slate-900 shadow hover:bg-yellow-500"
                   >
                     Toggle
                   </button>

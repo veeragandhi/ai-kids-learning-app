@@ -35,6 +35,46 @@ interface VideoScript {
   slides: VideoSlide[];
 }
 
+// Speech voices vary by browser/OS and load asynchronously. macOS ships
+// dozens of non-English voices (Amelie, Anna, Alice, ...), so picking by
+// name alone ("female") often lands on a French/German/Spanish voice and
+// the English lesson is read in the wrong language. Always pin the
+// utterance to English and prefer a voice whose lang is English.
+function pickEnglishVoice(): SpeechSynthesisVoice | null {
+  try {
+    const voices = speechSynthesis.getVoices();
+    if (!voices || voices.length === 0) return null;
+    const english = voices.filter((voice) =>
+      (voice.lang || "").toLowerCase().startsWith("en")
+    );
+    const pool = english.length > 0 ? english : voices;
+    return (
+      pool.find((voice) =>
+        /samantha|google us english|zira|aria|jenny|karen|moira|tessa/i.test(voice.name)
+      ) ||
+      pool.find(
+        (voice) =>
+          voice.name.toLowerCase().includes("female") &&
+          (voice.lang || "").toLowerCase().startsWith("en")
+      ) ||
+      pool.find((voice) => voice.name.toLowerCase().includes("female")) ||
+      pool[0] ||
+      null
+    );
+  } catch {
+    return null;
+  }
+}
+
+function applyEnglishVoice(utterance: SpeechSynthesisUtterance) {
+  utterance.lang = "en-US";
+  const voice = pickEnglishVoice();
+  if (voice) {
+    utterance.voice = voice;
+    if (voice.lang) utterance.lang = voice.lang;
+  }
+}
+
 export default function ClientLesson() {
   const [topic, setTopic] = useState("");
   const [age, setAge] = useState(8);
@@ -93,9 +133,18 @@ export default function ClientLesson() {
     return () => clearInterval(interval);
   }, [loading]);
 
-  useEffect(() => () => {
-    if (progressRef.current) clearInterval(progressRef.current);
-    speechSynthesis.cancel();
+  useEffect(() => {
+    // Warm up async voice loading (Chrome/macOS) so an English voice is
+    // already available when the child presses Read Aloud.
+    try {
+      speechSynthesis.getVoices();
+    } catch {
+      // speech synthesis unavailable: read-aloud just won't speak
+    }
+    return () => {
+      if (progressRef.current) clearInterval(progressRef.current);
+      speechSynthesis.cancel();
+    };
   }, []);
 
   const handleReadAloud = () => {
@@ -114,17 +163,10 @@ export default function ClientLesson() {
     utterance.pitch = 1.1;
     utterance.volume = 1;
 
-    // Optional: choose kid-friendly voice
-    const voices = speechSynthesis.getVoices();
-
-    const preferredVoice =
-      voices.find((voice) =>
-        voice.name.toLowerCase().includes("female")
-      ) || voices[0];
-
-    if (preferredVoice) {
-      utterance.voice = preferredVoice;
-    }
+    // Kid-friendly voice, pinned to English (macOS lists non-English
+    // voices first, which previously read the lesson aloud in French,
+    // German, Spanish, ...).
+    applyEnglishVoice(utterance);
 
     utterance.onstart = () => {
       setIsSpeaking(true);
@@ -216,9 +258,7 @@ export default function ClientLesson() {
       speechSynthesis.cancel();
       const utt = new SpeechSynthesisUtterance(`${slide.heading}. ${slide.body}`);
       utt.rate = 0.85; utt.pitch = 1.1;
-      const voices = speechSynthesis.getVoices();
-      const voice = voices.find((v) => v.name.toLowerCase().includes("female")) || voices[0];
-      if (voice) utt.voice = voice;
+      applyEnglishVoice(utt);
       speechSynthesis.speak(utt);
     }
   };
@@ -395,7 +435,8 @@ export default function ClientLesson() {
                         w-full rounded-2xl border border-slate-200
                         bg-slate-50
                         px-5 py-4
-                        text-lg font-semibold
+                        text-lg font-semibold text-slate-900
+                        [color-scheme:light]
                         outline-none
                         transition-all
                         focus:border-sky-400
@@ -418,7 +459,9 @@ export default function ClientLesson() {
                       w-full rounded-2xl border border-slate-200
                       bg-slate-50
                       px-5 py-4
-                      text-lg
+                      text-lg text-slate-900
+                      placeholder:text-slate-400
+                      [color-scheme:light]
                       outline-none
                       transition-all
                       focus:border-sky-400

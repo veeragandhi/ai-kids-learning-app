@@ -1,12 +1,13 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 type AskStage = "ask" | "guided" | "answer" | "done";
 
 type AskResponse = {
   type?: string;
+  answer?: string;
   question?: string;
   hintLevel?: number;
   questionType?: string;
@@ -40,14 +41,11 @@ function AskInner() {
   const searchParams = useSearchParams();
   const [stage, setStage] = useState<AskStage>("ask");
   const [question, setQuestion] = useState("");
-  // URL params are readable during render (Suspense boundary above), so
-  // initialize from them directly instead of syncing in an effect.
-  const [age, setAge] = useState(() => {
-    const ageParam = Number(searchParams.get("age"));
-    return Number.isFinite(ageParam) && ageParam >= 3 && ageParam <= 18
-      ? Math.floor(ageParam)
-      : 8;
-  });
+  // URL params and the sessionStorage lesson handoff are client-only:
+  // reading them during render mismatches the server prerender (no
+  // sessionStorage, empty search params) and throws a hydration error.
+  // Start from server-matching defaults, then sync in an effect.
+  const [age, setAge] = useState(8);
   const [questionType, setQuestionType] = useState<"guided" | "creative">("guided");
   const [guidingQuestion, setGuidingQuestion] = useState("");
   const [studentAnswer, setStudentAnswer] = useState("");
@@ -59,8 +57,17 @@ function AskInner() {
   const [conversation, setConversation] = useState<ConversationTurn[]>([]);
   // Lesson-linked Ask: when arriving from /lesson, the displayed lesson is
   // the grounding context (same sessionStorage handoff as Quiz).
-  const [{ lessonTopic, lessonText }] = useState(() => {
-    if (searchParams.get("source") !== "lesson") return { lessonTopic: "", lessonText: "" };
+  const [{ lessonTopic, lessonText }, setLessonRef] = useState({
+    lessonTopic: "",
+    lessonText: "",
+  });
+
+  useEffect(() => {
+    const ageParam = Number(searchParams.get("age"));
+    if (Number.isFinite(ageParam) && ageParam >= 3 && ageParam <= 18) {
+      setAge(Math.floor(ageParam));
+    }
+    if (searchParams.get("source") !== "lesson") return;
     const topic = searchParams.get("topic") || "";
     try {
       const raw = sessionStorage.getItem("lastLesson");
@@ -72,18 +79,17 @@ function AskInner() {
           typeof last.topic === "string" &&
           (!topic || last.topic.trim().toLowerCase() === topic.trim().toLowerCase())
         ) {
-          return { lessonTopic: last.topic, lessonText: last.lesson.slice(0, 2000) };
+          setLessonRef({ lessonTopic: last.topic, lessonText: last.lesson.slice(0, 2000) });
         }
       }
     } catch {
       // storage unavailable: fall back to standalone document Q&A
     }
-    return { lessonTopic: "", lessonText: "" };
-  });
+  }, [searchParams]);
 
   const lessonSourcePayload =
     lessonText && lessonTopic
-      ? { source: "lesson" as const, lessonText }
+      ? { source: "lesson" as const, lessonText, lessonTopic }
       : { source: "standalone" as const };
 
   const reset = () => {
@@ -94,6 +100,16 @@ function AskInner() {
     setExplanation("");
     setResponse(null);
     setConversation([]);
+    setError("");
+  };
+
+  // Honest no-context answer (e.g. lesson-linked "I don't know based on
+  // this lesson"): the answer lives in the conversation history while we
+  // stay in the "ask" stage, so clear the input for the next question
+  // without wiping the history or lesson context.
+  const askAnotherAfterHonestAnswer = () => {
+    setQuestion("");
+    setResponse(null);
     setError("");
   };
 
@@ -236,7 +252,7 @@ function AskInner() {
                   value={question}
                   onChange={(e) => setQuestion(e.target.value)}
                   rows={4}
-                  className="mt-2 w-full rounded-3xl border border-slate-200 p-4 text-slate-800 shadow-sm focus:border-indigo-400 focus:outline-none"
+                  className="mt-2 w-full rounded-3xl border border-slate-200 bg-white p-4 text-slate-900 shadow-sm placeholder:text-slate-400 [color-scheme:light] focus:border-indigo-400 focus:outline-none"
                   placeholder="What do you want to learn from your document?"
                 />
               </div>
@@ -250,7 +266,7 @@ function AskInner() {
                     max={12}
                     value={age}
                     onChange={(e) => setAge(Number(e.target.value))}
-                    className="mt-2 w-full rounded-2xl border border-slate-200 p-3 text-slate-800 focus:border-indigo-400 focus:outline-none"
+                    className="mt-2 w-full rounded-2xl border border-slate-200 bg-white p-3 text-slate-900 [color-scheme:light] focus:border-indigo-400 focus:outline-none"
                   />
                 </label>
                 <label className="block text-sm font-semibold text-slate-700">
@@ -258,7 +274,7 @@ function AskInner() {
                   <select
                     value={questionType}
                     onChange={(e) => setQuestionType(e.target.value as "guided" | "creative")}
-                    className="mt-2 w-full rounded-2xl border border-slate-200 p-3 text-slate-800 focus:border-indigo-400 focus:outline-none"
+                    className="mt-2 w-full rounded-2xl border border-slate-200 bg-white p-3 text-slate-900 [color-scheme:light] focus:border-indigo-400 focus:outline-none"
                   >
                     <option value="guided">Guided thinking question</option>
                     <option value="creative">Invent your own example</option>
@@ -269,7 +285,7 @@ function AskInner() {
               <button
                 onClick={askQuestion}
                 disabled={loading || !question.trim()}
-                className="inline-flex items-center justify-center rounded-3xl bg-indigo-600 px-6 py-3 text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                className="inline-flex items-center justify-center rounded-3xl bg-indigo-600 px-6 py-3 text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
               >
                 {loading ? "Thinking..." : "Get a guiding question"}
               </button>
@@ -297,6 +313,23 @@ function AskInner() {
             </section>
           )}
 
+          {stage === "ask" && response?.answer && !error && (
+            <div className="mt-8 rounded-[28px] border border-slate-200 bg-slate-50 p-6 shadow-sm">
+              <h2 className="text-lg font-semibold text-slate-900">Want to keep exploring?</h2>
+              <p className="mt-2 text-slate-700">
+                {lessonTopic
+                  ? `That question goes beyond your lesson on ${lessonTopic}. Ask another question about what the lesson teaches.`
+                  : "Ask another question from your learning material."}
+              </p>
+              <button
+                onClick={askAnotherAfterHonestAnswer}
+                className="mt-4 inline-flex items-center justify-center rounded-3xl bg-indigo-600 px-6 py-3 text-white transition hover:bg-indigo-700"
+              >
+                {lessonTopic ? "Ask another question about this lesson" : "Ask another question"}
+              </button>
+            </div>
+          )}
+
           {(stage !== "ask" || error) && (
             <div className="mt-8 space-y-6">
               {error && (
@@ -318,13 +351,13 @@ function AskInner() {
                     value={studentAnswer}
                     onChange={(e) => setStudentAnswer(e.target.value)}
                     rows={4}
-                    className="mt-3 w-full rounded-3xl border border-slate-200 p-4 text-slate-800 focus:border-indigo-400 focus:outline-none"
+                    className="mt-3 w-full rounded-3xl border border-slate-200 bg-white p-4 text-slate-900 placeholder:text-slate-400 [color-scheme:light] focus:border-indigo-400 focus:outline-none"
                     placeholder="Write your answer here..."
                   />
                   <button
                     onClick={submitAnswer}
                     disabled={loading || !studentAnswer.trim()}
-                    className="mt-4 inline-flex items-center justify-center rounded-3xl bg-emerald-600 px-6 py-3 text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                    className="mt-4 inline-flex items-center justify-center rounded-3xl bg-emerald-600 px-6 py-3 text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
                   >
                     {loading ? "Checking..." : "Submit answer"}
                   </button>
@@ -339,13 +372,13 @@ function AskInner() {
                     value={studentAnswer}
                     onChange={(e) => setStudentAnswer(e.target.value)}
                     rows={4}
-                    className="mt-4 w-full rounded-3xl border border-slate-200 p-4 text-slate-800 focus:border-indigo-400 focus:outline-none"
+                    className="mt-4 w-full rounded-3xl border border-slate-200 bg-white p-4 text-slate-900 placeholder:text-slate-400 [color-scheme:light] focus:border-indigo-400 focus:outline-none"
                     placeholder="Tell me what you think in your own words."
                   />
                   <button
                     onClick={submitAnswer}
                     disabled={loading || !studentAnswer.trim()}
-                    className="mt-4 inline-flex items-center justify-center rounded-3xl bg-emerald-600 px-6 py-3 text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                    className="mt-4 inline-flex items-center justify-center rounded-3xl bg-emerald-600 px-6 py-3 text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
                   >
                     {loading ? "Thinking..." : "Try again"}
                   </button>
@@ -360,13 +393,13 @@ function AskInner() {
                       value={explanation}
                       onChange={(e) => setExplanation(e.target.value)}
                       rows={4}
-                      className="w-full rounded-3xl border border-slate-200 p-4 text-slate-800 focus:border-indigo-400 focus:outline-none"
+                      className="w-full rounded-3xl border border-slate-200 bg-white p-4 text-slate-900 placeholder:text-slate-400 [color-scheme:light] focus:border-indigo-400 focus:outline-none"
                       placeholder="Explain how you knew your answer."
                     />
                     <button
                       onClick={submitExplanation}
                       disabled={loading || !explanation.trim()}
-                      className="mt-4 inline-flex items-center justify-center rounded-3xl bg-blue-600 px-6 py-3 text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                      className="mt-4 inline-flex items-center justify-center rounded-3xl bg-blue-600 px-6 py-3 text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
                     >
                       {loading ? "Reviewing..." : "Submit explanation"}
                     </button>

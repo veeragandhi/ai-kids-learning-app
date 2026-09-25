@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { generateAnswer, generateAnswerStream } from "@/lib/ai";
 import { getRelevantContext } from "@/lib/retrieval";
 import { OCR_MARKER_GUARD, toTeachingText } from "@/lib/ocr";
+import { defaultQuizForTopic } from "@/lib/quiz-fallback";
 
 const QUIZ_STOPWORDS = new Set([
   "what", "which", "how", "who", "why", "when", "where",
@@ -832,68 +833,6 @@ function isValidQuizQuestion(question: any): boolean {
   return true;
 }
 
-function buildContextFallbackQuiz(context: string, topic: string, count: number) {
-  // Use different lesson facts and question shapes when model JSON cannot be parsed.
-  const safeTopic = typeof topic === "string" && topic.trim() ? topic.trim().replace(/"/g, "'") : "this topic";
-  const sentences = context
-    .replace(/\s+/g, " ")
-    .split(/(?<=[.!?])\s+/)
-    .map((s) => s.replace(/^[.#\s]+/, "").replace(/\*\*/g, "").trim())
-    .filter((s) => s.length > 25 && s.length < 220 && /[a-zA-Z]{3,}/.test(s) && !/\?\s*$/.test(s) && !/^all about\b|^think about it$|^amazing fact$|^discover$/i.test(s));
-  const unique = [...new Set(sentences)];
-  const quiz: { question: string; options: string[]; answer: string }[] = [];
-  const questionTemplates = [
-    (focus: string) => `What does the lesson say about ${focus}?`,
-    (focus: string) => `Which detail does the lesson give about ${focus}?`,
-    (focus: string) => `What fact does the lesson give about ${focus}?`,
-    (focus: string) => `Which fact about ${focus} is in the lesson?`,
-  ];
-  const falseOptionTemplates = [
-    "Something else that is not true",
-    "A different idea from outside the lesson",
-  ];
-  for (let i = 0; i < count; i++) {
-    const sentence = unique[i % Math.max(unique.length, 1)] || `${safeTopic} is described in the lesson.`;
-    const words = sentence.replace(/[.?!,;:()[\]{}"]/g, "").split(/\s+/).filter((w) => w.length > 3);
-    const focus = words
-      .filter((word) => !/^(a|an|the|is|are|was|were|and|or|of|to|in|on)$/i.test(word))
-      .slice(0, 4)
-      .join(" ") || safeTopic;
-    const question = questionTemplates[i % questionTemplates.length](focus);
-    const correct = sentence.length <= 110 ? sentence : sentence.slice(0, 107) + "...";
-    // Prefer other real lesson sentences as distractors so options stay
-    // concrete; fall back to kid-friendly negatives only when needed.
-    const others = unique.filter((s) => s !== sentence);
-    const d1 = others[(i + 1) % Math.max(others.length, 1)]
-      ? others[(i + 1) % others.length].slice(0, 107)
-      : falseOptionTemplates[0];
-    const d2 = others[(i + 2) % Math.max(others.length, 1)]
-      ? others[(i + 2) % others.length].slice(0, 107)
-      : falseOptionTemplates[1];
-    const options = [correct, d1, d2];
-    // Rotate correct position so it is not always first.
-    const rotated = [...options.slice((i + 1) % 3), ...options.slice(0, (i + 1) % 3)];
-    quiz.push({
-      question,
-      options: rotated,
-      answer: correct,
-    });
-  }
-  return quiz;
-}
-
-function defaultQuizForTopic(topic: string, count = 3, context = "") {
-  if (context && context.trim().length > 0) {
-    return buildContextFallbackQuiz(context, topic, count);
-  }
-  const safeTopic = typeof topic === "string" && topic.trim() ? topic.trim().replace(/"/g, "'") : "this topic";
-  return Array.from({ length: count }, (_, i) => ({
-    question: `What did the lesson say about ${safeTopic} (fact ${i + 1})?`,
-    options: [`A fact from the lesson`, `Something not in the lesson`, `I don't know`],
-    answer: `A fact from the lesson`,
-  }));
-}
-
 function buildQuizPrompt(
   context: string,
   topic: string,
@@ -1206,6 +1145,7 @@ export async function POST(req: Request) {
 
   const cleanedQuiz = cleanRawQuiz(quiz);
   let parsed = safeParseQuiz(cleanedQuiz);
+  let fromFallback = false;
 
   if (!parsed || !hasQuizVariety(parsed) || !quizGroundedInContext(parsed, groundingSource)) {
     console.log("[quiz] first response failed parse / variety / grounding, retrying with a stricter prompt");
@@ -1215,15 +1155,19 @@ export async function POST(req: Request) {
     parsed = safeParseQuiz(retryCleaned);
     if (!parsed || !hasQuizVariety(parsed) || !quizGroundedInContext(parsed, groundingSource)) {
       console.error("[quiz] retry parse / grounding also failed", retryCleaned);
-      parsed = defaultQuizForTopic(topic, numQuestions, groundingSource);
+      parsed = defaultQuizForTopic(topic, numQuestions, groundingSource, age);
+      fromFallback = true;
     }
   }
 
-  parsed = fixQuizAnswers(fixSwappedQuizOptions(parsed, groundingSource));
+  // The deterministic fallback builds each option set matched to its own
+  // stem by construction — running the swap-fixer over it can only mismatch
+  // answers across questions (the reported "Q1's answer under Q2" bug).
+  parsed = fixQuizAnswers(fromFallback ? parsed : fixSwappedQuizOptions(parsed, groundingSource));
 
   if (!parsed || !validateQuizFormat(parsed, numQuestions) || !hasQuizVariety(parsed) || !quizGroundedInContext(parsed, groundingSource) || !(parsed as unknown[]).every(isValidQuizQuestion)) {
     console.error("[quiz] Invalid quiz format / not grounded after fixes:", JSON.stringify(parsed));
-    parsed = defaultQuizForTopic(topic, numQuestions, groundingSource);
+    parsed = defaultQuizForTopic(topic, numQuestions, groundingSource, age);
   }
 
   const totalTime = Date.now() - startTime;

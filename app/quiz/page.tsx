@@ -264,7 +264,8 @@ function QuizInner() {
                         w-full rounded-2xl border border-slate-200
                         bg-slate-50
                         px-5 py-3
-                        text-lg font-semibold
+                        text-lg font-semibold text-slate-900
+                        [color-scheme:light]
                         outline-none
                         transition-all
                         focus:border-yellow-400
@@ -288,7 +289,8 @@ function QuizInner() {
                         w-full rounded-2xl border border-slate-200
                         bg-slate-50
                         px-5 py-3
-                        text-lg font-semibold
+                        text-lg font-semibold text-slate-900
+                        [color-scheme:light]
                         outline-none
                         transition-all
                         focus:border-yellow-400
@@ -307,7 +309,9 @@ function QuizInner() {
                       flex-1 rounded-2xl border border-slate-200
                       bg-slate-50
                       px-5 py-4
-                      text-lg
+                      text-lg text-slate-900
+                      placeholder:text-slate-400
+                      [color-scheme:light]
                       outline-none
                       transition-all
                       focus:border-yellow-400

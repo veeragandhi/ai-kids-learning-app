@@ -17,6 +17,10 @@ type AskRequest = {
   // grounding context. Omitted/"standalone" keeps document retrieval.
   source?: "lesson" | "standalone";
   lessonText?: string;
+  // The lesson's topic/title (e.g. "Elephants"). The body often refers to
+  // the topic with pronouns ("their trunk..."), so coverage checks count
+  // topic words as taught.
+  lessonTopic?: string;
 };
 
 type ConversationTurn = {
@@ -250,13 +254,17 @@ const ASK_META_WORDS = new Set([
 function extractListItems(text: string) {
   const lists: string[][] = [];
   const patterns = [
-    /\b(?:need|needs|needed)\s+([^.?!]+)/gi,
-    /\b(?:use|uses|used)\s+(?:its\s+\w+\s+)?(?:for\s+)?([^.?!]+)/gi,
-    /\blive in\s+([^.?!]+)/gi,
+    { re: /\b(?:need|needs|needed)\s+([^.?!]+)/gi, needsPurpose: false },
+    { re: /\b(?:use|uses|used)\s+(?:its\s+\w+\s+)?(?:for\s+)?([^.?!]+)/gi, needsPurpose: true },
+    { re: /\blive in\s+([^.?!]+)/gi, needsPurpose: false },
   ];
 
-  for (const pattern of patterns) {
-    for (const match of text.matchAll(pattern)) {
+  for (const { re, needsPurpose } of patterns) {
+    for (const match of text.matchAll(re)) {
+      // A "use..." capture without a to/for purpose clause is an adverbial
+      // fragment ("move their trunks very carefully"), not a fact list —
+      // skip it so summaries never read "their trunks very carefully".
+      if (needsPurpose && !/\b(to|for)\b/i.test(match[1])) continue;
       const parts = match[1]
         .split(/,|;|\/|\band\b|\bor\b/i)
         .map((part) => cleanFactPhrase(part))
@@ -278,7 +286,9 @@ function extractListItems(text: string) {
 function cleanFactPhrase(part: string): string {
   let out = String(part || "")
     .replace(/[*•\-–—]+/g, " ")
-    .replace(/^\s*(?:their|its|his|her|our)\s+\w+\s+to\s*:\s*/i, "")
+    // Strip "their trunk to ..." / "them to ..." / "it to ..." lead-ins
+    // with or without a colon ("it to smell food" -> "smell food").
+    .replace(/^\s*(?:their|its|his|her|our|them|it)\s+(?:\w+\s+)?to\s*:?\s*/i, "")
     .replace(/^\s*\w+\s+to\s*:\s*/i, "")
     .replace(/[^a-zA-Z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
@@ -350,6 +360,12 @@ function bestFactList(context: string, question: string) {
   ]);
   const bestOverlap = ranked.length > 0 ? ranked[0].overlap : 0;
   const minOverlap = Math.max(1, bestOverlap - 1);
+  // Aggregate deduped fact items across every qualifying sentence window
+  // (capped for child-friendly summaries): trunk uses, plant needs, and
+  // similar lists often span several sentences, and returning only the first
+  // window silently dropped the rest. Per-window relevance gating is unchanged.
+  const seen = new Set<string>();
+  const combined: string[] = [];
   for (const item of ranked) {
     if (item.overlap === 0 || item.overlap < minOverlap) continue;
     if (item.overlap < bestOverlap) {
@@ -360,10 +376,17 @@ function bestFactList(context: string, question: string) {
     }
     const window = sentences.slice(item.index, item.index + 2).join(" ");
     const list = pickLongest(window);
-    if (list.length > 0) return list;
+    for (const entry of list) {
+      const key = entry.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        combined.push(entry);
+      }
+    }
+    if (combined.length >= 5) break;
   }
 
-  return [];
+  return combined;
 }
 
 function pickClueTerm(context: string, question: string) {
@@ -578,7 +601,12 @@ function isExplicitAnswerRequest(text: string) {
 }
 
 // Words that carry no entity meaning for answerability checks.
+// "used"/"apart" are question phrasing ("what is it used for apart from
+// breathing?"), not lesson entities: contentTokens already ignores
+// "use"/"uses"/"using", but "used" (length 4) survives stemming and "apart"
+// is never lesson content, so skip both explicitly here.
 const ANSWERABILITY_VERB_SKIP = new Set([
+  "used", "apart",
   "have", "has", "had", "hav", "having",
   "make", "makes", "made", "making",
   "take", "takes", "took", "taking",
@@ -647,9 +675,16 @@ function unanswerableEntityFromContext(context: string, question: string): strin
 // lesson at all? Strict token check, not similarity: anything beyond the
 // lesson's own words is honestly unknown ("I don't know based on this
 // lesson"). Standalone document Q&A never uses this gate.
-function questionCoveredByLesson(lessonText: string, question: string): boolean {
-  const lessonSet = new Set(contentTokens(lessonText));
-  const substantive = contentTokens(question).filter(
+// The lesson topic counts as taught: bodies routinely use pronouns
+// ("Their trunk helps them...") for the title subject, so without the topic
+// a question naming it ("what are elephants trunk used for?") would falsely
+// read as uncovered.
+function questionCoveredByLesson(lessonText: string, question: string, lessonTopic = ""): boolean {
+  // Concept normalization (breathe/breathing -> breath, ...) matches the
+  // grader: "breathing" in the question and "breathe" in the lesson are the
+  // same concept, otherwise covered questions falsely read as unknown.
+  const lessonSet = new Set([...answerConceptTokens(lessonText), ...answerConceptTokens(lessonTopic)]);
+  const substantive = answerConceptTokens(question).filter(
     (token) =>
       token.length >= 4 &&
       !ANSWERABILITY_VERB_SKIP.has(token) &&
@@ -1238,6 +1273,8 @@ export async function POST(req: Request) {
   const lessonMode = body.source === "lesson";
   const lessonText =
     typeof body.lessonText === "string" ? body.lessonText.trim().slice(0, 2000) : "";
+  const lessonTopic =
+    typeof body.lessonTopic === "string" ? body.lessonTopic.trim().slice(0, 200) : "";
   let context: string;
   let retrievalTime: number;
   if (lessonMode) {
@@ -1304,7 +1341,7 @@ export async function POST(req: Request) {
   if (mode === "question") {
     // Lesson-linked: anything beyond the displayed lesson's own words is
     // honestly unknown. Never reach into the document for more.
-    if (lessonMode && !questionCoveredByLesson(context, question)) {
+    if (lessonMode && !questionCoveredByLesson(context, question, lessonTopic)) {
       const totalTime = Date.now() - startTime;
       const summary = buildAnswerSummary(context, question);
       const honest =
