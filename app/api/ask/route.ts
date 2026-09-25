@@ -553,7 +553,30 @@ function buildAnswerSummary(context: string, question: string): string {
     return `Here is what the lesson says: ${formatted}.`;
   }
 
-  // Fallback: extract key tokens from the question and context
+  // Fallback: quote the lesson sentence closest to the question. Quoting a
+  // real sentence ("Others are giant, fluffy balls made of gas!") teaches;
+  // raw keyword soup ("our, wonderful, planet, home, and earth") does not.
+  // Longest top-overlap sentence wins so a title fragment never stands alone.
+  const questionTokens = new Set(contentTokens(question));
+  const sentences = context
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length > 25);
+  if (sentences.length > 0) {
+    let best = sentences[0];
+    let bestScore = -1;
+    for (const sentence of sentences) {
+      const overlap = contentTokens(sentence).filter((token) => questionTokens.has(token)).length;
+      if (overlap > bestScore || (overlap === bestScore && sentence.length > best.length)) {
+        bestScore = overlap;
+        best = sentence;
+      }
+    }
+    const quoted = best.length > 160 ? `${best.slice(0, 157).trimEnd()}...` : best;
+    return `Here is what the lesson says: ${quoted}`;
+  }
+
+  // Last resort: extract key tokens from the question and context
   const keyTokens = relevantContextTokens(context, question);
   const keyWords = Array.from(keyTokens).slice(0, 5);
 
@@ -594,10 +617,20 @@ function gracefulPartialEnd(summary: string): AnswerGrade {
 }
 
 // A frustrated child explicitly asking for the answer ("I want the answer",
-// "this does not answer my question") should get the graceful summary, not
-// another round of grading as a misconception.
+// "this does not answer my question", "you tell me") should get the graceful
+// summary, not another round of grading as a misconception.
 function isExplicitAnswerRequest(text: string) {
-  return /\b(i want (the )?answer|just tell me|tell me (the answer|now|please)|give me the answer|this does (not|n.t) answer|you('re| are) not (answering|listening)|i don'?t like this|not related to|answer my question|not what i asked|that'?s not what i asked)\b/i.test(text);
+  return /\b(i want (the )?answer|just tell me|you tell me|tell me\b|give me the answer|this does (not|n.t) answer|you('re| are) not (answering|listening)|i don'?t like this|not related to|answer my question|not what i asked|that'?s not what i asked)\b/i.test(text);
+}
+
+// A child correctly noticing the lesson never covers their question
+// ("there is no clue about it in lesson", "it did not say anything").
+// This is an honest observation, not off-topic defiance — believing the
+// child here is what breaks the "lesson talks about X" redirect loop for
+// questions the material genuinely cannot answer (e.g. planetary
+// visibility when the lesson only names the planets).
+function isLessonSilentObservation(text: string) {
+  return /\b(no clue|no answer|didn'?t say|did not say|doesn'?t say|does not say|don'?t say|never said|never talks? about|not in the (lesson|text)|nothing about|no mention|not mention(ed|ing)?|doesn'?t explain|does not explain|can'?t find it|it says nothing)\b/i.test(text);
 }
 
 // Words that carry no entity meaning for answerability checks.
@@ -656,7 +689,7 @@ function unanswerableEntityFromContext(context: string, question: string): strin
 
   const text = String(question || "");
   const isWhy = /^\s*why\b/i.test(text) || /\bhow come\b/i.test(text);
-  const negated = /\b(don'?t|doesn'?t|didn'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|couldn'?t|not|never)\b/i.test(text);
+  const negated = /\b(don'?t|doesn'?t|didn'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|couldn'?t|cannot|not|never)\b/i.test(text);
   if (!isWhy || !negated) return null;
 
   // Subject test: the missing entity comes before the main content verb
@@ -709,6 +742,13 @@ const EXTRA_CLAIM_SKIP = new Set([
   "know", "remember", "school", "word", "words",
   "use", "used", "uses", "using",
   "job", "jobs",
+  // Function words that survive stemming but are never lesson entities
+  // ("why we cannot see..." must flag "mercury", never "cannot").
+  "cannot", "could", "should", "would", "shall", "might", "must", "ought",
+  "from", "with", "about", "into", "over", "under", "between", "through",
+  "during", "without", "within", "along", "across", "behind", "beyond",
+  "except", "until", "while", "though", "since", "because", "unless",
+  "whether", "whose", "whom",
 ]);
 
 function unsupportedExtras(context: string, question: string, studentAnswer: string): string[] {
@@ -797,6 +837,37 @@ function gradeStudentAnswer(
     };
   }
 
+  // The child correctly reporting that the lesson never covers their
+  // question ("it did not say anything", "there is no clue in the lesson").
+  // Believe them: affirm honestly with what the lesson DOES say and end
+  // gracefully instead of grading the observation as off-topic. This is the
+  // escape hatch for semantically unanswerable questions whose words all
+  // appear in the lesson (token coverage passes but no sentence explains
+  // the "why", e.g. planetary visibility).
+  if (isLessonSilentObservation(studentAnswer)) {
+    const summary = buildAnswerSummary(context, question);
+    if (lessonMode) {
+      return {
+        responseState: "don't_remember" as const,
+        correctness: "partial" as const,
+        feedback:
+          `You noticed something important — the lesson does not explain that. ` +
+          `${summary}`,
+        nextPrompt: GRACEFUL_END_PROMPT,
+        graceful: true,
+      };
+    }
+    return {
+      responseState: "don't_remember" as const,
+      correctness: "partial" as const,
+      feedback:
+        `You noticed something important — that is not in the text. ` +
+        `${summary}`,
+      nextPrompt: GRACEFUL_END_PROMPT,
+      graceful: true,
+    };
+  }
+
   // Check for uncertainty responses - be flexible about what follows "don't remember/know"
   const hasUncertainty = isUncertainAnswer(studentAnswer);
   const normalizedAnswer = normalizeForComparison(studentAnswer);
@@ -856,6 +927,23 @@ function gradeStudentAnswer(
     };
   }
 
+  // Restating the original question as the "answer" ("why we cannot see
+  // mercury from earth?") is stalling, not evidence — never praise it as a
+  // correct answer. Offer a clue prompt instead. Single-word answers stay on
+  // the normal path: "Trunk." names one lesson word, it does not restate the
+  // question (and the similarity check substring-matches any shared word).
+  if (
+    String(studentAnswer).trim().split(/\s+/).length >= 3 &&
+    isTooSimilarToOriginal(studentAnswer, question)
+  ) {
+    return {
+      responseState: "don't_remember" as const,
+      correctness: "partial" as const,
+      feedback: `Good — that is our question. Now let's hunt for a clue. Look for the part about ${pickEvidenceTerm(context, question)} in the lesson.`,
+      nextPrompt: "What clue can you find in the lesson about this?",
+    };
+  }
+
   // Fact-match lookahead: an answer that fully matches a MULTI-word lesson
   // fact ("use them to smell food") is an attempted answer with pronouns,
   // not a topic change — even when it shares no literal word with the
@@ -870,6 +958,19 @@ function gradeStudentAnswer(
   });
 
   if (!earlyMultiMatch && isOffTopicAnswer(context, question, studentAnswer)) {
+    // Never loop the same redirect: the second off-topic turn in a row ends
+    // gracefully with what the lesson DOES say instead of repeating
+    // "That idea is not in the lesson though."
+    if (previousAssistant.some((turn) => turn.includes("That idea is not in the lesson"))) {
+      const summary = buildAnswerSummary(context, question);
+      return {
+        responseState: "don't_remember" as const,
+        correctness: "partial" as const,
+        feedback: `Let's pause here. ${summary}`,
+        nextPrompt: GRACEFUL_END_PROMPT,
+        graceful: true,
+      };
+    }
     return {
       responseState: "off_topic" as const,
       correctness: "incorrect" as const,
@@ -1057,6 +1158,22 @@ function gradeStudentAnswer(
         ? "A guess is a useful start. What makes you think that? Look for a lesson detail to support your idea."
         : "Let's test that idea against the lesson. Which detail supports your thinking?",
       nextPrompt: "What makes you think that?",
+    };
+  }
+
+  // A concrete entity the lesson never mentions ("mercury") inside an
+  // otherwise supported answer must not earn a "correct" — flag it gently
+  // and keep the child in the partial step instead of false praise.
+  const shortcutExtras = unsupportedExtras(context, question, studentAnswer);
+  if (shortcutExtras.length > 0) {
+    return {
+      responseState: "partially_correct" as const,
+      correctness: "partial" as const,
+      feedback: withExtrasNote(
+        "You used a detail from the lesson. Add one more detail and explain how it connects to the question, using your own words.",
+        shortcutExtras,
+      ),
+      nextPrompt: "What other detail from the lesson could make your answer stronger?",
     };
   }
 
@@ -1383,7 +1500,30 @@ export async function POST(req: Request) {
       : [];
     
     console.log(`[answer] question: "${question}" context preview: "${context.substring(0, 100)}..."`);
-    
+
+    // Lesson-linked: the displayed lesson is the only grounding. When the
+    // ORIGINAL question reaches beyond its words (e.g. Mercury when the
+    // lesson never names it), answer honestly here too instead of grading
+    // the child's tries against unrelated lesson facts.
+    if (lessonMode && !questionCoveredByLesson(context, question, lessonTopic)) {
+      const totalTime = Date.now() - startTime;
+      const summary = buildAnswerSummary(context, question);
+      const honest =
+        `You noticed something important — I don't know based on this lesson. ` +
+        `${summary}`;
+      return NextResponse.json(withConversation(body, [`${honest}\n\n${GRACEFUL_END_PROMPT}`], {
+        type: "evaluation",
+        responseState: "don't_remember" as const,
+        correctness: "partial" as const,
+        feedback: honest,
+        nextPrompt: GRACEFUL_END_PROMPT,
+        continueLearning: false,
+        hintLevel: 3,
+        source: "Document",
+        _timing: { totalTime, retrievalTime },
+      }), { status: 200 });
+    }
+
     if (!contextMatchesQuestion(context, question)) {
       console.log("[answer] Context does not match question, rejecting");
       const totalTime = Date.now() - startTime;
