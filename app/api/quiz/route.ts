@@ -94,6 +94,124 @@ function expandQuizSynonyms(words: string[]): Set<string> {
   return out;
 }
 
+// ── Answerability: every question must have a valid answer AMONG its
+// choices (the reported atmosphere-quiz bug). Two failure modes:
+//   Q1-type: no option answers the stem ("What layer do humans live in?"
+//     + options about sun distance / cloud colors). The correct fact
+//     (troposphere) is missing from the options.
+//   Q5-type: options belong to a different question ("What do weather
+//     words tell us?" + layer names as options).
+// Check: find the context sentence(s) closest to the question stem, then
+// require (a) at least one option to match that sentence, and (b) the
+// marked answer to BE that best-matching option. Synonym-aware so
+// "kid/kids/child/children" still match.
+function quizContextSentences(context: string): string[] {
+  return String(context || "")
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+function topSentencesForQuestion(
+  question: string,
+  context: string,
+  k = 2
+): string[] {
+  const sentences = quizContextSentences(context);
+  if (sentences.length === 0) return [];
+  const qWords = expandQuizSynonyms(quizContentWords(question));
+  const qSet = new Set(qWords);
+  const scored = sentences.map((s) => {
+    const sSet = new Set(expandQuizSynonyms(quizContentWords(s)));
+    const hits = [...qSet].filter((w) => sSet.has(w)).length;
+    return { s, hits };
+  });
+  scored.sort((a, b) => b.hits - a.hits);
+  return scored.slice(0, Math.max(1, k)).map((e) => e.s);
+}
+
+// Fraction of the option's content words found in the candidate answer
+// sentence(s). 1.0 = the option is fully stated by the sentence.
+function optionSupport(option: string, sentences: string[]): number {
+  const oWords = [...expandQuizSynonyms(quizContentWords(option))];
+  if (oWords.length === 0) return 0;
+  const oSet = new Set(oWords);
+  let best = 0;
+  for (const s of sentences) {
+    const sSet = new Set(expandQuizSynonyms(quizContentWords(s)));
+    const hits = [...oSet].filter((w) => sSet.has(w)).length;
+    best = Math.max(best, hits / oWords.length);
+  }
+  return best;
+}
+
+// Best option support for one question: how well does the single most
+// supported option match the question's answer sentence?
+function questionBestSupport(
+  question: string,
+  options: string[],
+  context: string
+): number {
+  if (!context || options.length === 0) return 0;
+  const top = topSentencesForQuestion(question, context, 2);
+  if (top.length === 0) return 0;
+  return Math.max(...options.map((opt) => optionSupport(opt, top)));
+}
+
+function isAnswerableQuizQuestion(
+  question: string,
+  options: string[],
+  answer: string,
+  context: string
+): boolean {
+  if (!context || options.length !== 3) return false;
+  // NOTE: top-1 only, deliberately strict. The single sentence closest to
+  // the stem is the question's answer sentence — if no option matches IT,
+  // the options belong to a different question (Q5-type), even when a
+  // second-best sentence elsewhere mentions one of the options.
+  const top = topSentencesForQuestion(String(question || ""), context, 1);
+  if (top.length === 0) return false;
+  const supports = options.map((opt) => optionSupport(opt, top));
+  const maxSupport = Math.max(...supports);
+  // (a) Q1-type: no option answers the stem — the correct fact is missing.
+  if (maxSupport < 0.3) {
+    console.error(
+      `[quiz] Unanswerable: no option matches the question's answer sentence (best ${maxSupport.toFixed(2)}): ${String(question).slice(0, 80)}`
+    );
+    return false;
+  }
+  // (b) The marked answer must BE a best-matching option, not a distractor.
+  const answerSupport = optionSupport(String(answer || ""), top);
+  if (answerSupport + 0.05 < maxSupport) {
+    console.error(
+      `[quiz] Unanswerable: answer "${String(answer).slice(0, 40)}" (support ${answerSupport.toFixed(2)}) is not the best-supported option (${maxSupport.toFixed(2)})`
+    );
+    return false;
+  }
+  // (c) Q5-type guard: options must discriminate — if every option matches
+  // the sentence equally there is no single correct answer.
+  const minSupport = Math.min(...supports);
+  if (maxSupport > 0.5 && maxSupport - minSupport < 0.1) {
+    console.error(`[quiz] Unanswerable: options do not discriminate: ${String(question).slice(0, 80)}`);
+    return false;
+  }
+  return true;
+}
+
+function quizAnswerableInContext(quiz: unknown, context: string): boolean {
+  if (!Array.isArray(quiz) || quiz.length === 0) return false;
+  return quiz.every((entry) => {
+    const q = entry as { options?: unknown; answer?: unknown; question?: unknown };
+    const options = Array.isArray(q?.options)
+      ? q.options.filter((opt): opt is string => typeof opt === "string")
+      : [];
+    const answer = typeof q?.answer === "string" ? q.answer : String(q?.answer ?? "");
+    const question = typeof q?.question === "string" ? q.question : String(q?.question ?? "");
+    return isAnswerableQuizQuestion(question, options, answer, context);
+  });
+}
+
 function pickAnswerForQuestion(question: string, options: string[], context: string): string {
   const qWords = expandQuizSynonyms(quizContentWords(question));
   const sentences = String(context || "")
@@ -191,15 +309,25 @@ function fixSwappedQuizOptions(quiz: any, context = ""): any {
       const oiFitsI = optionGrounding(qi, oi, context);
       const ojFitsJ = optionGrounding(qj, oj, context);
       const crossBetter = oiFitsJ > oiFitsI + 0.1 && ojFitsI > ojFitsJ + 0.1;
-      // Swap on a clear echo improvement OR a clear grounding improvement,
-      // so good quizzes are untouched but swapped fragment sets are fixed.
-      if (swappedEcho + 0.15 < currentEcho || swappedGround > currentGround + 0.2 || crossBetter) {
+      // Answerability swap (the reported Q1/Q5 atmosphere bug): Q1 holds
+      // weather-description options while Q5 holds the layer names, so each
+      // question's own options match the OTHER question's answer sentence.
+      // Compare per-question best-option support against each question's own
+      // top context sentence — whole-context grounding is too coarse to see it.
+      const currentSupport =
+        questionBestSupport(qi, oi, context) + questionBestSupport(qj, oj, context);
+      const swappedSupport =
+        questionBestSupport(qi, oj, context) + questionBestSupport(qj, oi, context);
+      // Swap on a clear echo improvement OR a clear grounding improvement OR
+      // a clear answerability improvement, so good quizzes are untouched but
+      // swapped fragment sets are fixed.
+      if (swappedEcho + 0.15 < currentEcho || swappedGround > currentGround + 0.2 || crossBetter || swappedSupport > currentSupport + 0.3) {
         // Never swap into a worse fragment situation.
         const fragAfterSwap = oj.filter(isFragmentOption).length + oi.filter(isFragmentOption).length;
         void currentFrag;
         void fragAfterSwap;
         console.error(
-          `[quiz] swapping options between Q${i} and Q${j} (echo ${currentEcho.toFixed(2)} -> ${swappedEcho.toFixed(2)}, ground ${currentGround.toFixed(2)} -> ${swappedGround.toFixed(2)})`
+          `[quiz] swapping options between Q${i} and Q${j} (echo ${currentEcho.toFixed(2)} -> ${swappedEcho.toFixed(2)}, ground ${currentGround.toFixed(2)} -> ${swappedGround.toFixed(2)}, support ${currentSupport.toFixed(2)} -> ${swappedSupport.toFixed(2)})`
         );
         const tmp = fixed[i].options;
         fixed[i].options = fixed[j].options;
@@ -264,9 +392,31 @@ function fixQuizAnswers(quiz: any): any {
 
     return {
       ...q,
-      // Always snap the answer into the options so validation can pass.
-      answer: bestScore > 0.5 ? bestMatch : (normalizedOptions.includes(normalizedAnswer) ? normalizedAnswer : bestMatch)
+      // Snap a near-miss answer into the options ONLY on strong word
+      // overlap. A weak/no match means no option actually answers the stem
+      // (the reported Q1-type bug) — keep the answer as-is so format
+      // validation fails and the retry/fallback path triggers instead of
+      // masking a broken quiz with a wrong-but-plausible answer.
+      answer: bestScore > 0.5 ? bestMatch : normalizedAnswer
     };
+  });
+}
+
+// Re-derive a wrongly-marked answer when the correct option IS present but
+// the model picked a distractor: point the answer at the option best
+// supported by the question's own answer sentence. When NO option is
+// supported (Q1-type: correct fact missing from the options) this cannot
+// help — the question stays unanswerable so validation rejects it.
+function fixQuizAnswerability(quiz: any, context = ""): any {
+  if (!Array.isArray(quiz) || !context) return quiz;
+  return quiz.map((q: any) => {
+    const question = String(q?.question || "");
+    const options = Array.isArray(q?.options) ? q.options : [];
+    const answer = typeof q?.answer === "string" ? q.answer : String(q?.answer ?? "");
+    if (!question || options.length !== 3) return q;
+    if (isAnswerableQuizQuestion(question, options, answer, context)) return q;
+    if (questionBestSupport(question, options, context) < 0.3) return q;
+    return { ...q, answer: pickAnswerForQuestion(question, options, context) };
   });
 }
 
@@ -726,15 +876,19 @@ Use CLEAR vocabulary appropriate for age ${age}:
    ✗ BAD: "(Small family)" or "[Small family]"
    ✓ GOOD: "Small family"
 
-5. EACH QUESTION MUST BE SPECIFIC about what it asks
+  5. EACH QUESTION MUST BE SPECIFIC about what it asks
 6. ONLY ONE option should be correct - others must be clearly FALSE
-7. OPTIONS MUST BELONG TO THEIR OWN QUESTION. Never copy an option set
-   from one question onto another. Each question's options must use NEW
-   words — an option must NOT repeat the question's key phrase.
-   ✗ BAD: "Which family has one or two children?" + options: [One or two children, Five or more children, No children] (option just repeats the question!)
-   ✓ GOOD: "Which family has one or two children?" + options: [Small family, Large family, Single parent household]
-   ✗ BAD: "What's a big family like?" + options: [Small family, Large family, Just a house] (options copied from the other question!)
-   ✓ GOOD: "What's a big family like?" + options: [Has many children, Has no children, Is just a house]
+7. OPTIONS MUST BELONG TO THEIR OWN QUESTION AND ANSWER IT. Never copy an option set
+    from one question onto another. Each question's options must use NEW
+    words — an option must NOT repeat the question's key phrase.
+    ✗ BAD: "Which family has one or two children?" + options: [One or two children, Five or more children, No children] (option just repeats the question!)
+    ✓ GOOD: "Which family has one or two children?" + options: [Small family, Large family, Single parent household]
+    ✗ BAD: "What's a big family like?" + options: [Small family, Large family, Just a house] (options copied from the other question!)
+    ✓ GOOD: "What's a big family like?" + options: [Has many children, Has no children, Is just a house]
+    ✗ BAD (unanswerable): "What layer do humans live in?" + options: [The distance to the sun, The colors of clouds, The different ways we experience weather] (NO option is the layer!)
+    ✓ GOOD: "What layer do humans live in?" + options: [The troposphere, The mesosphere, The stratosphere]
+    ✗ BAD (mismatched): "What do weather words tell us?" + options: [The mesosphere, The stratosphere, The troposphere] (layer names cannot answer a weather-words question!)
+    The correct "answer" MUST appear word-for-word as one of the 3 options.
 8. Use vocabulary appropriate for age ${age}
 ${vocabularyGuidance}
 
@@ -951,7 +1105,11 @@ CRITICAL RULES FOR QUESTIONS:
    ✗ "What was this quiz intended to teach?" (meta question - NEVER ask this)
 
   5b. OPTIONS MUST BELONG TO THEIR OWN QUESTION — never swap option sets
-     between questions, and no option may just repeat the question stem:
+     between questions, and no option may just repeat the question stem. The
+     correct answer MUST appear word-for-word among the 3 options, and every
+     option must be a plausible answer to THIS stem (layer names for a
+     "what layer" question, weather descriptions for a "what does weather
+     tell us" question — never mix the two):
     ✗ BAD: "Which family has one or two children?" + [One or two children, Five or more children, No children] (option repeats the question!)
     ✓ GOOD: "Which family has one or two children?" + [Small family, Large family, Single parent household]
     ✗ BAD: "What's a big family like?" + [Small family, Large family, Just a house] (options copied from the other question!)
@@ -1106,8 +1264,12 @@ export async function POST(req: Request) {
             let parsed = safeParseQuiz(cleanedQuiz);
             if (parsed) {
               // Un-swap option sets first (answers travel with re-derivation),
-              // then snap answers into the (possibly swapped) options.
-              parsed = fixQuizAnswers(fixSwappedQuizOptions(parsed, groundingSource));
+              // then snap answers into the (possibly swapped) options and
+              // re-derive wrongly-marked answers when the right option exists.
+              parsed = fixQuizAnswerability(
+                fixQuizAnswers(fixSwappedQuizOptions(parsed, groundingSource)),
+                groundingSource
+              );
               cleanedQuiz = JSON.stringify(parsed);
             } else {
               console.error("[quiz] streaming parse failed, raw:", cleanedQuiz);
@@ -1147,14 +1309,14 @@ export async function POST(req: Request) {
   let parsed = safeParseQuiz(cleanedQuiz);
   let fromFallback = false;
 
-  if (!parsed || !hasQuizVariety(parsed) || !quizGroundedInContext(parsed, groundingSource)) {
-    console.log("[quiz] first response failed parse / variety / grounding, retrying with a stricter prompt");
+  if (!parsed || !hasQuizVariety(parsed) || !quizGroundedInContext(parsed, groundingSource) || !quizAnswerableInContext(parsed, groundingSource)) {
+    console.log("[quiz] first response failed parse / variety / grounding / answerability, retrying with a stricter prompt");
     const retryPrompt = buildQuizRetryPrompt(quiz, groundingSource, topic, age, numQuestions);
     const retryResponse = await generateAnswer(retryPrompt, tokenBudget);
     const retryCleaned = cleanRawQuiz(retryResponse);
     parsed = safeParseQuiz(retryCleaned);
-    if (!parsed || !hasQuizVariety(parsed) || !quizGroundedInContext(parsed, groundingSource)) {
-      console.error("[quiz] retry parse / grounding also failed", retryCleaned);
+    if (!parsed || !hasQuizVariety(parsed) || !quizGroundedInContext(parsed, groundingSource) || !quizAnswerableInContext(parsed, groundingSource)) {
+      console.error("[quiz] retry parse / grounding / answerability also failed", retryCleaned);
       parsed = defaultQuizForTopic(topic, numQuestions, groundingSource, age);
       fromFallback = true;
     }
@@ -1163,10 +1325,15 @@ export async function POST(req: Request) {
   // The deterministic fallback builds each option set matched to its own
   // stem by construction — running the swap-fixer over it can only mismatch
   // answers across questions (the reported "Q1's answer under Q2" bug).
-  parsed = fixQuizAnswers(fromFallback ? parsed : fixSwappedQuizOptions(parsed, groundingSource));
+  parsed = fromFallback
+    ? fixQuizAnswers(parsed)
+    : fixQuizAnswerability(
+        fixQuizAnswers(fixSwappedQuizOptions(parsed, groundingSource)),
+        groundingSource
+      );
 
-  if (!parsed || !validateQuizFormat(parsed, numQuestions) || !hasQuizVariety(parsed) || !quizGroundedInContext(parsed, groundingSource) || !(parsed as unknown[]).every(isValidQuizQuestion)) {
-    console.error("[quiz] Invalid quiz format / not grounded after fixes:", JSON.stringify(parsed));
+  if (!parsed || !validateQuizFormat(parsed, numQuestions) || !hasQuizVariety(parsed) || !quizGroundedInContext(parsed, groundingSource) || !quizAnswerableInContext(parsed, groundingSource) || !(parsed as unknown[]).every(isValidQuizQuestion)) {
+    console.error("[quiz] Invalid quiz format / not grounded / unanswerable after fixes:", JSON.stringify(parsed));
     parsed = defaultQuizForTopic(topic, numQuestions, groundingSource, age);
   }
 

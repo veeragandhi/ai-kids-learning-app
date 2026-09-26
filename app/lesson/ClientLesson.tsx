@@ -39,25 +39,63 @@ interface VideoScript {
 // dozens of non-English voices (Amelie, Anna, Alice, ...), so picking by
 // name alone ("female") often lands on a French/German/Spanish voice and
 // the English lesson is read in the wrong language. Always pin the
-// utterance to English and prefer a voice whose lang is English.
-function pickEnglishVoice(): SpeechSynthesisVoice | null {
+// utterance to English and prefer a warm, kid-friendly female voice.
+//
+// Kid-tested priority (Mac + Chrome on Mac):
+//  1. Samantha (macOS en-US — warm, friendly, Apple default, kids like her)
+//  2. Google US English (Chrome on Mac — friendly young female)
+//  3. Ava / Allison (newer natural macOS en-US females)
+//  4. Google UK English Female, Karen (cheerful AU), Zoe, Serena, Moira, Tessa
+// Novelty/robot voices (Fred, Bubbles, Wobble, Whisper, Cellos, ...) are
+// explicitly excluded so a kid never gets a joke voice by accident.
+const KID_FRIENDLY_VOICE_ORDER: RegExp[] = [
+  /^samantha$/i,
+  /google us english/i,
+  /^ava$/i,
+  /google uk english female/i,
+  /^allison$/i,
+  /^karen$/i,
+  /^zoe$/i,
+  /^serena$/i,
+  /^susan$/i,
+  /^moira$/i,
+  /^tessa$/i,
+  /zira|aria|jenny/i,
+];
+
+const BLOCKED_VOICES = /fred|bubbles|wobble|whisper|cellos|bad news|bahh|bells|boo|deranged|good news|hysterical|pipe organ|trinoids|whisper|junior|ralph|kathy|princess|albert|jester|superstar|zarvox|pushed|reed|rocko|sandy|grandma|grandpa/i;
+
+function isBlockedVoice(name: string): boolean {
+  return BLOCKED_VOICES.test(name);
+}
+
+function pickKidFriendlyVoice(
+  allVoices?: SpeechSynthesisVoice[]
+): SpeechSynthesisVoice | null {
   try {
-    const voices = speechSynthesis.getVoices();
+    const voices =
+      allVoices ?? (typeof speechSynthesis !== "undefined" ? speechSynthesis.getVoices() : []);
     if (!voices || voices.length === 0) return null;
     const english = voices.filter((voice) =>
       (voice.lang || "").toLowerCase().startsWith("en")
     );
-    const pool = english.length > 0 ? english : voices;
+    const pool = (english.length > 0 ? english : voices).filter(
+      (voice) => !isBlockedVoice(voice.name)
+    );
+    if (pool.length === 0) return null;
+    for (const pattern of KID_FRIENDLY_VOICE_ORDER) {
+      const found = pool.find((voice) => pattern.test(voice.name.trim()));
+      if (found) return found;
+    }
+    // Fallback: any English female-sounding voice, then first natural voice.
     return (
-      pool.find((voice) =>
-        /samantha|google us english|zira|aria|jenny|karen|moira|tessa/i.test(voice.name)
-      ) ||
       pool.find(
         (voice) =>
           voice.name.toLowerCase().includes("female") &&
           (voice.lang || "").toLowerCase().startsWith("en")
       ) ||
-      pool.find((voice) => voice.name.toLowerCase().includes("female")) ||
+      pool.find((voice) => /female|samantha|ava|girl|woman|lady/i.test(voice.name)) ||
+      pool.find((voice) => (voice.lang || "").toLowerCase() === "en-us") ||
       pool[0] ||
       null
     );
@@ -66,9 +104,17 @@ function pickEnglishVoice(): SpeechSynthesisVoice | null {
   }
 }
 
-function applyEnglishVoice(utterance: SpeechSynthesisUtterance) {
+// Back-compat alias (used below).
+function pickEnglishVoice(): SpeechSynthesisVoice | null {
+  return pickKidFriendlyVoice();
+}
+
+function applyEnglishVoice(
+  utterance: SpeechSynthesisUtterance,
+  preferredVoice: SpeechSynthesisVoice | null = null
+) {
   utterance.lang = "en-US";
-  const voice = pickEnglishVoice();
+  const voice = preferredVoice ?? pickKidFriendlyVoice();
   if (voice) {
     utterance.voice = voice;
     if (voice.lang) utterance.lang = voice.lang;
@@ -96,6 +142,14 @@ export default function ClientLesson() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isSpeaking, setIsSpeaking] = useState(false);
+
+  // Kid-friendly voice picker: let the child/parent choose the voice.
+  // Defaults to Samantha (Mac) / Google US English (Chrome) — warm female.
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [selectedVoiceName, setSelectedVoiceName] = useState<string>("");
+
+  const selectedVoice: SpeechSynthesisVoice | null =
+    availableVoices.find((v) => v.name === selectedVoiceName) ?? null;
 
   useEffect(() => {
     const topicFromUrl = searchParams.get("topic");
@@ -134,18 +188,75 @@ export default function ClientLesson() {
   }, [loading]);
 
   useEffect(() => {
-    // Warm up async voice loading (Chrome/macOS) so an English voice is
-    // already available when the child presses Read Aloud.
+    // Warm up async voice loading (Chrome/macOS) so a kid-friendly English
+    // voice is already available when the child presses Read Aloud.
+    // Voices load async — listen for voiceschanged, then pick the default
+    // (Samantha on Mac) unless the family already chose one.
+    const loadVoices = () => {
+      try {
+        const voices = speechSynthesis.getVoices();
+        if (!voices || voices.length === 0) return;
+        const english = voices.filter((v) =>
+          (v.lang || "").toLowerCase().startsWith("en")
+        );
+        setAvailableVoices(english.length > 0 ? english : voices);
+        const saved =
+          typeof localStorage !== "undefined"
+            ? localStorage.getItem("amigosnest-voice")
+            : null;
+        if (saved && voices.some((v) => v.name === saved)) {
+          setSelectedVoiceName(saved);
+        } else {
+          const def = pickKidFriendlyVoice(voices);
+          if (def) setSelectedVoiceName((prev) => prev || def.name);
+        }
+      } catch {
+        // speech synthesis unavailable: read-aloud just won't speak
+      }
+    };
+    loadVoices();
     try {
-      speechSynthesis.getVoices();
+      speechSynthesis.onvoiceschanged = loadVoices;
     } catch {
-      // speech synthesis unavailable: read-aloud just won't speak
+      // ignore — some browsers don't support onvoiceschanged
     }
     return () => {
       if (progressRef.current) clearInterval(progressRef.current);
-      speechSynthesis.cancel();
+      try {
+        speechSynthesis.cancel();
+      } catch {
+        // ignore
+      }
+      try {
+        speechSynthesis.onvoiceschanged = null;
+      } catch {
+        // ignore
+      }
     };
   }, []);
+
+  const handleVoiceChange = (name: string) => {
+    setSelectedVoiceName(name);
+    try {
+      localStorage.setItem("amigosnest-voice", name);
+    } catch {
+      // storage may be unavailable
+    }
+    // Quick preview so the girl can hear if she likes it.
+    try {
+      speechSynthesis.cancel();
+      const preview = new SpeechSynthesisUtterance("Hi! I'm your learning buddy. Let's learn together!");
+      preview.rate = 0.95;
+      preview.pitch = 1.2;
+      preview.volume = 1;
+      const voice =
+        availableVoices.find((v) => v.name === name) ?? pickKidFriendlyVoice();
+      applyEnglishVoice(preview, voice);
+      speechSynthesis.speak(preview);
+    } catch {
+      // preview is best-effort
+    }
+  };
 
   const handleReadAloud = () => {
     if (!lesson) return;
@@ -159,14 +270,14 @@ export default function ClientLesson() {
 
     const utterance = new SpeechSynthesisUtterance(lesson);
 
-    utterance.rate = 0.9;
-    utterance.pitch = 1.1;
+    // Warmer, slightly slower + higher pitch = friendlier for young kids.
+    utterance.rate = 0.95;
+    utterance.pitch = 1.2;
     utterance.volume = 1;
 
-    // Kid-friendly voice, pinned to English (macOS lists non-English
-    // voices first, which previously read the lesson aloud in French,
-    // German, Spanish, ...).
-    applyEnglishVoice(utterance);
+    // Kid-friendly female voice (Samantha on Mac), pinned to English.
+    // Respects the family's picker choice when set.
+    applyEnglishVoice(utterance, selectedVoice ?? pickKidFriendlyVoice());
 
     utterance.onstart = () => {
       setIsSpeaking(true);
@@ -257,8 +368,8 @@ export default function ClientLesson() {
     if (slide && speechSynthesis) {
       speechSynthesis.cancel();
       const utt = new SpeechSynthesisUtterance(`${slide.heading}. ${slide.body}`);
-      utt.rate = 0.85; utt.pitch = 1.1;
-      applyEnglishVoice(utt);
+      utt.rate = 0.95; utt.pitch = 1.2;
+      applyEnglishVoice(utt, selectedVoice ?? pickKidFriendlyVoice());
       speechSynthesis.speak(utt);
     }
   };
@@ -665,7 +776,7 @@ export default function ClientLesson() {
                 </div>
 
                 {/* Action buttons */}
-                <div className="flex flex-wrap gap-3">
+                <div className="flex flex-wrap items-center gap-3">
                   <button onClick={handleReadAloud}
                     className="
                       flex items-center gap-2
@@ -680,6 +791,24 @@ export default function ClientLesson() {
                     <Volume2 size={18} />
                     {isSpeaking ? "Stop Reading" : "Read Aloud"}
                   </button>
+
+                  {availableVoices.length > 0 && (
+                    <label className="flex items-center gap-2 rounded-2xl bg-slate-100 px-4 py-3 text-sm font-medium text-slate-700">
+                      🎙️ Voice
+                      <select
+                        aria-label="Choose read-aloud voice"
+                        value={selectedVoiceName}
+                        onChange={(e) => handleVoiceChange(e.target.value)}
+                        className="max-w-[12rem] cursor-pointer bg-transparent font-semibold text-slate-800 outline-none"
+                      >
+                        {availableVoices.map((v) => (
+                          <option key={v.name} value={v.name}>
+                            {v.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
 
                   <button
                     onClick={generateVideo}

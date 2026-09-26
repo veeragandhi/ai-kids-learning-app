@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "evaluate:ask": "node .agents/skills/ask/scripts/evaluate-ask.mjs",
+    "evaluate:quiz": "node scripts/evaluate-quiz.mjs",
     "evaluate:lesson": "node scripts/evaluate-lesson.mjs",
     "seed:samples": "node scripts/seed-sample-docs.mjs",
     "video:social": "node scripts/social-video/render.mjs",
