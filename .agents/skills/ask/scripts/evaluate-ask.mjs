@@ -73,6 +73,11 @@ function evaluateResponse(scenario, status, response, elapsedMs) {
       if (!(typeof response.answer === "string" && hasUncertainty(response.answer)) && !hasUncertainty(responseText)) {
         failures.push("expected an honest no-context or uncertainty response");
       }
+    } else if (expect.beyondDocumentsSignal) {
+      // Home Explore general-knowledge shape: { answer } with a guaranteed
+      // honesty signal — not the guidingQuestion schema, not a refusal.
+      if (!response.answer || typeof response.answer !== "string") failures.push("missing explore answer");
+      if (!includesAny(responseText, expect.beyondDocumentsSignal)) failures.push(`response is missing the beyond-documents honesty signal: ${expect.beyondDocumentsSignal.join(", ")}`);
     } else {
       if (response.type !== "guidingQuestion") failures.push(`expected guidingQuestion type, received ${String(response.type)}`);
       if (!response.question || typeof response.question !== "string") failures.push("missing guiding question");

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense } from "react";
+import { lessonStorage } from "@/lib/lessonStorage";
 import {
   ArrowLeft,
   Sparkles,
@@ -48,12 +49,37 @@ function QuizInner() {
   const [error, setError] = useState("");
   const [loadingText, setLoadingText] = useState("");
   const [anchored, setAnchored] = useState(false);
+  // Persisted lesson reuse: same lesson content the child already read.
+  const [lessonId, setLessonId] = useState<string | null>(null);
+  const [lessonText, setLessonText] = useState("");
+  const [lessonTopic, setLessonTopic] = useState("");
 
   useEffect(() => {
     const t = searchParams.get("topic");
     const a = Number(searchParams.get("age"));
+    const id = searchParams.get("lessonId");
     if (t) setTopic(t);
     if (Number.isFinite(a) && a >= 3 && a <= 18) setAge(Math.floor(a));
+    // Prefer the persisted lesson (IndexedDB) so Quiz uses the exact
+    // lesson content — survives refresh, unlike sessionStorage.
+    // An explicit ?lessonId= always wins; the active-lesson pointer is
+    // only used for lesson-sourced visits (fromLesson=1) so a standalone
+    // /quiz stays standalone.
+    const activeId = id || (searchParams.get("fromLesson") === "1" ? lessonStorage.getActiveId() : null);
+    if (!activeId) return;
+    setLessonId(activeId);
+    lessonStorage
+      .get(activeId)
+      .then((saved) => {
+        if (!saved) return; // missing/deleted: fall back to topic-only quiz
+        if (!t) setTopic(saved.topic);
+        setLessonText(saved.lesson);
+        setLessonTopic(saved.topic);
+        setAnchored(true);
+      })
+      .catch(() => {
+        // storage errors: fall back to sessionStorage handoff below
+      });
   }, [searchParams]);
 
   useEffect(() => {
@@ -91,24 +117,38 @@ function QuizInner() {
 
     // Anchor to the most recent displayed lesson so the quiz never tests
     // facts the child has not read yet (elephant-trunk report).
-    let lessonText = "";
-    try {
-      const raw = sessionStorage.getItem("lastLesson");
-      if (raw) {
-        const last = JSON.parse(raw);
-        if (
-          last &&
-          typeof last.lesson === "string" &&
-          typeof last.topic === "string" &&
-          last.topic.trim().toLowerCase() === topic.trim().toLowerCase()
-        ) {
-          lessonText = last.lesson.slice(0, 2000);
-          setAnchored(true);
+    // Source of truth: persisted IndexedDB lesson (same lessonId as the
+    // Lesson page). sessionStorage handoff kept as a legacy fallback.
+    // NOTE: set unconditionally (not `else if (!anchored)`) — `anchored`
+    // here is the pre-click render value, so a conditional would keep the
+    // `setAnchored(false)` reset above and the banner would never show.
+    // Topic-match guard preserved from the original handoff so a retargeted
+    // topic input is never anchored to an unrelated lesson.
+    let text = "";
+    if (lessonText && lessonTopic.trim().toLowerCase() === topic.trim().toLowerCase()) {
+      text = lessonText;
+      setAnchored(true);
+    } else {
+      try {
+        const raw = sessionStorage.getItem("lastLesson");
+        if (raw) {
+          const last = JSON.parse(raw);
+          if (
+            last &&
+            typeof last.lesson === "string" &&
+            typeof last.topic === "string" &&
+            last.topic.trim().toLowerCase() === topic.trim().toLowerCase()
+          ) {
+            text = last.lesson.slice(0, 2000);
+            if (!lessonId && typeof last.lessonId === "string") setLessonId(last.lessonId);
+            setAnchored(true);
+          }
         }
+      } catch {
+        // ignore storage errors; fall back to retrieval-only quiz
       }
-    } catch {
-      // ignore storage errors; fall back to retrieval-only quiz
     }
+    const lessonTextForApi = text.slice(0, 2000);
 
     try {
       const res = await fetch("/api/quiz", {
@@ -116,7 +156,7 @@ function QuizInner() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ topic, age, numQuestions, lessonText }),
+        body: JSON.stringify({ topic, age, numQuestions, lessonText: lessonTextForApi }),
       });
 
       const data = await res.json();
@@ -734,7 +774,7 @@ function QuizInner() {
                   </button>
 
                   <Link
-                    href="/lesson"
+                    href={lessonId ? `/lesson?lessonId=${encodeURIComponent(lessonId)}` : "/lesson"}
                     className="
                       rounded-2xl
                       bg-black/20

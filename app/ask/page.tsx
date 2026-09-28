@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { lessonStorage } from "@/lib/lessonStorage";
 
 type AskStage = "ask" | "guided" | "answer" | "done";
 
@@ -46,7 +47,10 @@ function AskInner() {
   // sessionStorage, empty search params) and throws a hydration error.
   // Start from server-matching defaults, then sync in an effect.
   const [age, setAge] = useState(8);
-  const [questionType, setQuestionType] = useState<"guided" | "creative">("guided");
+  // Guided attempts on the current question (sent as attemptCount so the
+  // server can trigger the STUCK escape hatch at 3+ unlanding attempts).
+  // Reset whenever a new question starts.
+  const [attemptCount, setAttemptCount] = useState(0);
   const [guidingQuestion, setGuidingQuestion] = useState("");
   const [studentAnswer, setStudentAnswer] = useState("");
   const [lastStudentAnswer, setLastStudentAnswer] = useState("");
@@ -62,13 +66,9 @@ function AskInner() {
     lessonText: "",
   });
 
-  useEffect(() => {
-    const ageParam = Number(searchParams.get("age"));
-    if (Number.isFinite(ageParam) && ageParam >= 3 && ageParam <= 18) {
-      setAge(Math.floor(ageParam));
-    }
-    if (searchParams.get("source") !== "lesson") return;
-    const topic = searchParams.get("topic") || "";
+  // Legacy sessionStorage handoff (pre-IndexedDB flow). Kept so older
+  // /lesson links without ?lessonId= still ground Ask in the lesson.
+  const fallBackToSessionHandoff = (topic: string) => {
     try {
       const raw = sessionStorage.getItem("lastLesson");
       if (raw) {
@@ -85,6 +85,38 @@ function AskInner() {
     } catch {
       // storage unavailable: fall back to standalone document Q&A
     }
+  };
+
+  useEffect(() => {
+    const ageParam = Number(searchParams.get("age"));
+    if (Number.isFinite(ageParam) && ageParam >= 3 && ageParam <= 18) {
+      setAge(Math.floor(ageParam));
+    }
+    // Lesson-linked Ask: same persisted lesson as /lesson (IndexedDB),
+    // so Ask reuses the exact lesson content. sessionStorage handoff kept
+    // as a legacy fallback. An explicit ?lessonId= always wins; the
+    // active-lesson pointer is only used for lesson-sourced visits so a
+    // standalone /ask stay standalone.
+    const explicitId = searchParams.get("lessonId");
+    const topic = searchParams.get("topic") || "";
+    const idToLoad =
+      explicitId ||
+      (searchParams.get("source") === "lesson" ? lessonStorage.getActiveId() : null);
+    if (idToLoad) {
+      lessonStorage
+        .get(idToLoad)
+        .then((saved) => {
+          if (saved && (!topic || saved.topic.trim().toLowerCase() === topic.trim().toLowerCase())) {
+            setLessonRef({ lessonTopic: saved.topic, lessonText: saved.lesson.slice(0, 2000) });
+            return;
+          }
+          fallBackToSessionHandoff(topic);
+        })
+        .catch(() => fallBackToSessionHandoff(topic));
+      return;
+    }
+    if (searchParams.get("source") !== "lesson") return;
+    fallBackToSessionHandoff(topic);
   }, [searchParams]);
 
   const lessonSourcePayload =
@@ -101,6 +133,7 @@ function AskInner() {
     setResponse(null);
     setConversation([]);
     setError("");
+    setAttemptCount(0);
   };
 
   // Honest no-context answer (e.g. lesson-linked "I don't know based on
@@ -111,18 +144,20 @@ function AskInner() {
     setQuestion("");
     setResponse(null);
     setError("");
+    setAttemptCount(0);
   };
 
   const askQuestion = async () => {
     if (!question.trim()) return;
     setLoading(true);
     setError("");
+    setAttemptCount(0);
 
     try {
       const res = await fetch("/api/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, age, mode: "question", questionType, conversation, ...lessonSourcePayload }),
+        body: JSON.stringify({ question, age, mode: "question", questionType: "guided", conversation, ...lessonSourcePayload }),
       });
       const data = await res.json();
       if (!res.ok || data.error) {
@@ -159,6 +194,8 @@ function AskInner() {
   const submitAnswer = async () => {
     if (!studentAnswer.trim()) return;
     const submittedAnswer = studentAnswer.trim();
+    const nextAttempt = attemptCount + 1;
+    setAttemptCount(nextAttempt);
     setLoading(true);
     setError("");
 
@@ -172,6 +209,7 @@ function AskInner() {
           mode: "answer",
           guidingQuestion,
           studentAnswer: submittedAnswer,
+          attemptCount: nextAttempt,
           conversation,
           ...lessonSourcePayload,
         }),
@@ -209,6 +247,7 @@ function AskInner() {
           guidingQuestion,
           studentAnswer: lastStudentAnswer,
           explanation,
+          attemptCount,
           conversation,
           ...lessonSourcePayload,
         }),
@@ -244,56 +283,10 @@ function AskInner() {
             )}
           </div>
 
-          {stage === "ask" && (
-            <div className="space-y-6">
-              <div>
-                <label className="text-sm font-semibold text-slate-700">Your Question</label>
-                <textarea
-                  value={question}
-                  onChange={(e) => setQuestion(e.target.value)}
-                  rows={4}
-                  className="mt-2 w-full rounded-3xl border border-slate-200 bg-white p-4 text-slate-900 shadow-sm placeholder:text-slate-400 [color-scheme:light] focus:border-indigo-400 focus:outline-none"
-                  placeholder="What do you want to learn from your document?"
-                />
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <label className="block text-sm font-semibold text-slate-700">
-                  Child age
-                  <input
-                    type="number"
-                    min={5}
-                    max={12}
-                    value={age}
-                    onChange={(e) => setAge(Number(e.target.value))}
-                    className="mt-2 w-full rounded-2xl border border-slate-200 bg-white p-3 text-slate-900 [color-scheme:light] focus:border-indigo-400 focus:outline-none"
-                  />
-                </label>
-                <label className="block text-sm font-semibold text-slate-700">
-                  Question style
-                  <select
-                    value={questionType}
-                    onChange={(e) => setQuestionType(e.target.value as "guided" | "creative")}
-                    className="mt-2 w-full rounded-2xl border border-slate-200 bg-white p-3 text-slate-900 [color-scheme:light] focus:border-indigo-400 focus:outline-none"
-                  >
-                    <option value="guided">Guided thinking question</option>
-                    <option value="creative">Invent your own example</option>
-                  </select>
-                </label>
-              </div>
-
-              <button
-                onClick={askQuestion}
-                disabled={loading || !question.trim()}
-                className="inline-flex items-center justify-center rounded-3xl bg-indigo-600 px-6 py-3 text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
-              >
-                {loading ? "Thinking..." : "Get a guiding question"}
-              </button>
-            </div>
-          )}
-
+          {/* Completed conversation sits ABOVE the current step so the
+              child always sees what was already said before typing next. */}
           {conversation.length > 0 && (
-            <section className="mt-8 border-t border-slate-200 pt-6" aria-label="Conversation history">
+            <section className="mb-8 border-b border-slate-200 pb-6" aria-label="Conversation history">
               <h2 className="text-lg font-semibold text-slate-900">Conversation</h2>
               <div className="mt-4 space-y-3">
                 {conversation.map((turn, index) => (
@@ -311,6 +304,43 @@ function AskInner() {
                 ))}
               </div>
             </section>
+          )}
+
+          {stage === "ask" && (
+            <div className="space-y-6">
+              <div>
+                <label className="text-sm font-semibold text-slate-700">Your Question</label>
+                <textarea
+                  value={question}
+                  onChange={(e) => setQuestion(e.target.value)}
+                  rows={4}
+                  className="mt-2 w-full rounded-3xl border border-slate-200 bg-white p-4 text-slate-900 shadow-sm placeholder:text-slate-400 [color-scheme:light] focus:border-indigo-400 focus:outline-none"
+                  placeholder="What do you want to learn from your document?"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-slate-700">
+                  Child age
+                  <input
+                    type="number"
+                    min={5}
+                    max={12}
+                    value={age}
+                    onChange={(e) => setAge(Number(e.target.value))}
+                    className="mt-2 w-full rounded-2xl border border-slate-200 bg-white p-3 text-slate-900 [color-scheme:light] focus:border-indigo-400 focus:outline-none"
+                  />
+                </label>
+              </div>
+
+              <button
+                onClick={askQuestion}
+                disabled={loading || !question.trim()}
+                className="inline-flex items-center justify-center rounded-3xl bg-indigo-600 px-6 py-3 text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
+              >
+                {loading ? "Thinking..." : "Get a guiding question"}
+              </button>
+            </div>
           )}
 
           {stage === "ask" && response?.answer && !error && (
@@ -339,9 +369,19 @@ function AskInner() {
               )}
 
               {guidingQuestion && stage !== "ask" && (
-                <p className="mt-6 text-sm text-slate-500">
-                  Hint level: {response?.hintLevel || 1}
-                </p>
+                <div className="mt-6 flex items-center justify-between gap-3">
+                  <p className="text-sm text-slate-500">
+                    Hint level: {response?.hintLevel || 1}
+                  </p>
+                  {(stage === "guided" || stage === "answer") && (
+                    <button
+                      onClick={reset}
+                      className="rounded-full px-4 py-2 text-sm font-semibold text-indigo-600 transition hover:bg-indigo-50 hover:text-indigo-800"
+                    >
+                      ↩ Ask a different question
+                    </button>
+                  )}
+                </div>
               )}
 
               {stage === "guided" && (

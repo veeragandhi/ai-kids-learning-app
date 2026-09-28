@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { lessonStorage, type StoredLesson } from "@/lib/lessonStorage";
 import {
   ArrowLeft,
   Sparkles,
@@ -128,6 +129,11 @@ export default function ClientLesson() {
   const [loading, setLoading] = useState(false);
   const [loadingText, setLoadingText] = useState("");
   const [error, setError] = useState("");
+  // Persistent lesson identity (IndexedDB). Null = not yet saved.
+  const [lessonId, setLessonId] = useState<string | null>(null);
+  const [savedLessons, setSavedLessons] = useState<StoredLesson[]>([]);
+  const [restoring, setRestoring] = useState(false);
+  const loadedIdRef = useRef<string | null>(null);
 
   // Video state
   const [videoScript, setVideoScript] = useState<VideoScript | null>(null);
@@ -154,6 +160,7 @@ export default function ClientLesson() {
   useEffect(() => {
     const topicFromUrl = searchParams.get("topic");
     const ageFromUrl = Number(searchParams.get("age"));
+    const lessonIdFromUrl = searchParams.get("lessonId");
 
     if (topicFromUrl) {
       setTopic(topicFromUrl);
@@ -162,7 +169,82 @@ export default function ClientLesson() {
     if (Number.isFinite(ageFromUrl) && ageFromUrl >= 3 && ageFromUrl <= 18) {
       setAge(Math.floor(ageFromUrl));
     }
+
+    // Load a persisted lesson when an ID is present. Never auto-generate:
+    // generation only happens via the Start Adventure button.
+    // Refresh support: if the URL has no lessonId (e.g. plain /lesson after
+    // a refresh from an older link), fall back to the last-viewed lesson —
+    // unless the user explicitly picked a new topic via ?topic=.
+    const idToLoad = lessonIdFromUrl || (!topicFromUrl ? lessonStorage.getActiveId() : null);
+    if (!idToLoad || loadedIdRef.current === idToLoad) return;
+    loadedIdRef.current = idToLoad;
+    setRestoring(true);
+    lessonStorage
+      .get(idToLoad)
+      .then((saved) => {
+        if (!saved) {
+          // Missing/deleted lesson: graceful empty state, no crash.
+          setLessonId(null);
+          setLesson("");
+          setError(
+            "That saved lesson couldn't be found. It may have been deleted — generate a new one below."
+          );
+          return;
+        }
+        setLessonId(saved.id);
+        setTopic(saved.topic);
+        setAge(saved.age);
+        setLesson(saved.lesson);
+        setError("");
+        lessonStorage.setActiveId(saved.id);
+        // Keep the Quiz/Ask handoff working for older flows.
+        try {
+          sessionStorage.setItem(
+            "lastLesson",
+            JSON.stringify({ topic: saved.topic, age: saved.age, lesson: saved.lesson.slice(0, 2000), lessonId: saved.id, at: Date.now() })
+          );
+        } catch {
+          // storage may be unavailable
+        }
+      })
+      .catch(() => {
+        setLessonId(null);
+        setLesson("");
+      })
+      .finally(() => setRestoring(false));
   }, [searchParams]);
+
+  // "My Lessons" list: previously generated lessons, newest first.
+  useEffect(() => {
+    lessonStorage
+      .list()
+      .then(setSavedLessons)
+      .catch(() => setSavedLessons([]));
+  }, [lessonId, lesson]);
+
+  const openSavedLesson = (id: string) => {
+    const saved = savedLessons.find((l) => l.id === id);
+    if (saved) {
+      loadedIdRef.current = saved.id;
+      setLessonId(saved.id);
+      setTopic(saved.topic);
+      setAge(saved.age);
+      setLesson(saved.lesson);
+      setError("");
+      lessonStorage.setActiveId(saved.id);
+    }
+    router.push(`/lesson?lessonId=${encodeURIComponent(id)}&topic=${encodeURIComponent(saved?.topic ?? "")}&age=${saved?.age ?? 8}`);
+  };
+
+  const deleteSavedLesson = async (id: string) => {
+    await lessonStorage.delete(id);
+    setSavedLessons((prev) => prev.filter((l) => l.id !== id));
+    if (lessonId === id) {
+      setLessonId(null);
+      lessonStorage.setActiveId(null);
+      loadedIdRef.current = null;
+    }
+  };
 
   useEffect(() => {
     if (!loading) return;
@@ -378,7 +460,7 @@ export default function ClientLesson() {
     try {
       sessionStorage.setItem(
         "lastLesson",
-        JSON.stringify({ topic, age, lesson: lesson.slice(0, 2000), at: Date.now() })
+        JSON.stringify({ topic, age, lesson: lesson.slice(0, 2000), lessonId, at: Date.now() })
       );
     } catch {
       // storage may be unavailable; quiz/ask still work via URL topic
@@ -388,13 +470,15 @@ export default function ClientLesson() {
   const startQuizFromLesson = () => {
     if (!lesson || !topic) return;
     saveLastLesson();
-    router.push(`/quiz?topic=${encodeURIComponent(topic)}&age=${age}&fromLesson=1`);
+    const lessonParam = lessonId ? `&lessonId=${encodeURIComponent(lessonId)}` : "";
+    router.push(`/quiz?topic=${encodeURIComponent(topic)}&age=${age}&fromLesson=1${lessonParam}`);
   };
 
   const askAboutLesson = () => {
     if (!lesson || !topic) return;
     saveLastLesson();
-    router.push(`/ask?topic=${encodeURIComponent(topic)}&age=${age}&source=lesson`);
+    const lessonParam = lessonId ? `&lessonId=${encodeURIComponent(lessonId)}` : "";
+    router.push(`/ask?topic=${encodeURIComponent(topic)}&age=${age}&source=lesson${lessonParam}`);
   };
 
   const generateLesson = async () => {
@@ -425,6 +509,27 @@ export default function ClientLesson() {
       }
 
       setLesson(data.lesson);
+      // Persist locally (IndexedDB) so refresh/navigation/browser-restart
+      // keeps the exact lesson. Keep the existing lesson string verbatim.
+      try {
+        const saved = await lessonStorage.save({ topic, lesson: data.lesson, age });
+        loadedIdRef.current = saved.id;
+        setLessonId(saved.id);
+        lessonStorage.setActiveId(saved.id);
+        setSavedLessons((prev) => [saved, ...prev.filter((l) => l.id !== saved.id)]);
+        try {
+          sessionStorage.setItem(
+            "lastLesson",
+            JSON.stringify({ topic, age, lesson: data.lesson.slice(0, 2000), lessonId: saved.id, at: Date.now() })
+          );
+        } catch {
+          // session handoff is best-effort; IndexedDB is the source of truth
+        }
+        router.replace(`/lesson?lessonId=${encodeURIComponent(saved.id)}&topic=${encodeURIComponent(topic)}&age=${age}`);
+      } catch (persistErr) {
+        console.error("[lesson page] Failed to persist lesson:", persistErr);
+        // Lesson still displays; persistence is best-effort.
+      }
     } catch (err) {
       console.error("[lesson page] Error:", err);
       setError(`Error: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -977,7 +1082,7 @@ export default function ClientLesson() {
         )}
 
         {/* Empty State */}
-        {!lesson && !loading && (
+        {!lesson && !loading && !restoring && (
           <div className="mt-12 flex flex-col items-center justify-center text-center">
             <div className="mb-4 text-7xl">✨</div>
 
@@ -989,6 +1094,50 @@ export default function ClientLesson() {
               Start a magical AI learning adventure designed for curious young
               minds.
             </p>
+          </div>
+        )}
+
+        {/* Restoring persisted lesson */}
+        {restoring && (
+          <div className="mt-12 flex flex-col items-center justify-center text-center">
+            <div className="mb-4 animate-bounce text-6xl">📚</div>
+            <p className="text-slate-500">Opening your saved lesson...</p>
+          </div>
+        )}
+
+        {/* My Lessons — reopen previously generated lessons */}
+        {savedLessons.length > 0 && !loading && (
+          <div className="mx-auto mt-12 max-w-4xl rounded-[32px] bg-white/70 p-6 shadow-lg backdrop-blur-xl">
+            <h2 className="mb-4 text-xl font-bold text-slate-800">📚 My Lessons</h2>
+            <div className="grid gap-3">
+              {savedLessons.map((saved) => (
+                <div
+                  key={saved.id}
+                  className={`flex items-center justify-between gap-3 rounded-2xl border p-4 ${
+                    saved.id === lessonId ? "border-sky-400 bg-sky-50" : "border-slate-200 bg-white"
+                  }`}
+                >
+                  <button
+                    onClick={() => openSavedLesson(saved.id)}
+                    className="flex-1 text-left"
+                    aria-label={`Open lesson about ${saved.topic}`}
+                  >
+                    <p className="font-bold text-slate-800">{saved.topic}</p>
+                    <p className="text-sm text-slate-500">
+                      Age {saved.age} · {new Date(saved.updatedAt).toLocaleDateString()}
+                      {saved.id === lessonId ? " · Currently open" : ""}
+                    </p>
+                  </button>
+                  <button
+                    onClick={() => deleteSavedLesson(saved.id)}
+                    className="rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-red-100 hover:text-red-700"
+                    aria-label={`Delete lesson about ${saved.topic}`}
+                  >
+                    Delete
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>

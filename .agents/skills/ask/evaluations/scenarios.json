@@ -78,17 +78,17 @@
   },
   {
     "id": "answer-not-present",
-    "description": "A fact absent from the uploaded material is not fabricated",
+    "description": "Home Explore answers beyond-document detail from general knowledge with an honesty signal instead of refusing",
     "mode": "question",
     "payload": { "question": "What color are fish?", "age": 9, "questionType": "guided" },
-    "expect": { "noContextOrUncertainty": true, "mustNotLeakEvidence": ["blue", "red", "green"] }
+    "expect": { "beyondDocumentsSignal": ["i couldn t find that in your learning material"], "evidence": ["fish"], "mustNotLeakEvidence": ["lesson says"] }
   },
   {
     "id": "irrelevant-context",
-    "description": "A query with likely unrelated retrieved material does not produce an unsupported fact",
+    "description": "Home Explore answers a question the documents only partly cover, signaled as beyond-document",
     "mode": "question",
     "payload": { "question": "What is the favorite food of an elephant?", "age": 9, "questionType": "guided" },
-    "expect": { "noContextOrUncertainty": true, "noDirectAnswer": true }
+    "expect": { "beyondDocumentsSignal": ["i couldn t find that in your learning material"], "evidence": ["elephant"], "mustNotLeakEvidence": ["lesson says"] }
   },
   {
     "id": "multiple-relevant-chunks",
@@ -155,10 +155,10 @@
   },
   {
     "id": "unanswerable-why-humans",
-    "description": "A why question about something the lesson never mentions gets honesty, not a redirection loop",
+    "description": "Home Explore answers a beyond-documents why-question from general knowledge with an honesty signal (Lesson Ask stays honest instead)",
     "mode": "question",
-    "payload": { "question": "Why don't humans have trunks like elephants?", "age": 8, "questionType": "guided" },
-    "expect": { "noContextOrUncertainty": true }
+    "payload": { "question": "Why don't humans have trunks?", "age": 8, "questionType": "guided" },
+    "expect": { "beyondDocumentsSignal": ["i couldn t find that in your learning material"], "evidence": ["human", "trunk", "people", "elephant"], "mustNotLeakEvidence": ["lesson says"] }
   },
   {
     "id": "unanswerable-answer-mode",
@@ -222,5 +222,33 @@
     "mode": "answer",
     "payload": { "question": "Why did Stegosaurus live before T. rex?", "age": 9, "guidingQuestion": "Which dates can you compare?", "studentAnswer": "I don't know." },
     "expect": { "correctness": "partial", "evidence": ["rex", "stegosaurus", "live"], "nextPrompt": "What clue can you find in the lesson about this?", "feedbackMustNotInclude": ["forest"] }
+  },
+  {
+    "id": "explore-humans-trunk",
+    "description": "Home Explore answers a beyond-documents curiosity from general knowledge with an honesty signal and no lesson claim",
+    "mode": "question",
+    "payload": { "question": "Why do humans not have elephant trunks?", "age": 8, "questionType": "guided" },
+    "expect": { "beyondDocumentsSignal": ["i couldn t find that in your learning material"], "evidence": ["human", "trunk", "people", "elephant"], "mustNotLeakEvidence": ["lesson says"] }
+  },
+  {
+    "id": "lesson-humans-trunk-honest",
+    "description": "Same humans-trunks question in Lesson Ask stays grounded: the lesson does not explain it",
+    "mode": "question",
+    "payload": { "source": "lesson", "lessonText": "Elephants have long trunks. They use them to smell food and find water.", "question": "Why do humans not have elephant trunks?", "age": 8, "questionType": "guided" },
+    "expect": { "noContextOrUncertainty": true }
+  },
+  {
+    "id": "explore-answer-fallback",
+    "description": "Home Explore answer mode with no usable material responds with signaled general knowledge in the evaluation schema",
+    "mode": "answer",
+    "payload": { "question": "Why do submarines use periscopes?", "age": 9, "guidingQuestion": "What does the text say about submarines?", "studentAnswer": "To see above water." },
+    "expect": { "correctness": "partial", "nextPrompt": "Want to try another question from the lesson?", "feedbackMustInclude": ["couldn", "learning material"], "feedbackMustNotInclude": ["lesson says"] }
+  },
+  {
+    "id": "explore-explanation-fallback",
+    "description": "Home Explore explanation mode with no usable material responds with signaled general knowledge in the explanation schema",
+    "mode": "explanation",
+    "payload": { "question": "Why do submarines use periscopes?", "age": 9, "guidingQuestion": "What does the text say about submarines?", "studentAnswer": "To see above water.", "explanation": "I think submarines need to see without coming up." },
+    "expect": { "feedbackMustInclude": ["couldn", "learning material"], "feedbackMustNotInclude": ["lesson says"] }
   }
 ]

@@ -17,6 +17,11 @@ type AskRequest = {
   // grounding context. Omitted/"standalone" keeps document retrieval.
   source?: "lesson" | "standalone";
   lessonText?: string;
+  // Number of guided attempts on this specific question so far (sent by
+  // the client, clamped in the handler). Drives the STUCK escape hatch:
+  // at 3+ attempts that still are not landing, end gracefully with a
+  // grounded summary instead of guiding forever.
+  attemptCount?: number;
   // The lesson's topic/title (e.g. "Elephants"). The body often refers to
   // the topic with pronouns ("their trunk..."), so coverage checks count
   // topic words as taught.
@@ -1344,6 +1349,26 @@ Name one concrete word from the context in the question.
 ${creativeInstruction}
 ${OCR_MARKER_GUARD}
 
+STEP 1 (silent — never show this to the child): classify the QUESTION
+below as exactly one intent. When in doubt, pick TASK.
+- TASK: the default. The child asks about something the CONTEXT covers,
+  including plain "what/why/how" questions answerable from the CONTEXT,
+  an answer to check, or what a lesson question means.
+- CURIOSITY: ONLY when the child explicitly asks for something
+  interesting, fun, extra, or adjacent that the CONTEXT supports ("tell
+  me something interesting about X", "what else can it do", "why"
+  follow-ups beyond the first question). Share at most ONE short grounded
+  fact from the CONTEXT inside the guiding question, then bridge back
+  with a clue. A plain question answerable from CONTEXT is TASK, not
+  CURIOSITY.
+- STUCK: the child signals they want the answer outright ("just tell
+  me", "what's the answer", "I give up"). Do NOT state the answer;
+  respond with an easier guiding question pointing at the clearest clue.
+- OTHER: small talk, "explain that again", repeat/rephrase requests.
+  Briefly rephrase using CONTEXT words, then ask one guiding question.
+STEP 2: write ONE guiding question following the intent above and all
+rules above. 1-3 sentences, warm and curious, never a quiz-show host.
+
 
 CONTEXT:
 ${context}
@@ -1354,11 +1379,156 @@ ${question}
 Return ONLY valid JSON with this exact structure and no code fences.
 {
   "type": "guidingQuestion",
+  "intent": "exactly one of these four words: TASK, CURIOSITY, STUCK, OTHER",
   "question": "...",
   "hintLevel": ${hintLevel},
   "questionType": "${questionType}"
 }
 `;
+}
+
+// Home Explore honesty signal: every general-knowledge reply must open
+// with this sentence (case-insensitive match, straight or curly
+// apostrophe). The deterministic backstop below prepends it when absent,
+// so the contract holds even when the small model paraphrases.
+const EXPLORE_SIGNAL =
+  "I couldn't find that in your learning material, but I can still help! Here's what I know:";
+const EXPLORE_SIGNAL_RE = /couldn[’']t find that in your learning material/i;
+const EXPLORE_SAFE_REDIRECT = "Let's explore something from your lessons instead.";
+
+function buildExplorePrompt(
+  context: string,
+  question: string,
+  age: number,
+  missingEntity: string | null,
+): string {
+  const contextBlock = context
+    ? `DOCUMENT CONTEXT (from the child's learning material — use what is relevant, ignore anything unrelated to the question):\n"""\n${context}\n"""`
+    : `(No learning material was found for this question. Answer from simple general knowledge.)`;
+  const missingBlock = missingEntity
+    ? `\nNOTE: the learning material never mentions "${missingEntity}". Do not pretend it does.`
+    : ``;
+  return `You are AmigosNest, a warm AI learning companion for a ${age}-year-old child.
+
+${contextBlock}
+${missingBlock}
+CHILD'S QUESTION:
+"${question}"
+
+RULES:
+- Answer directly and simply in language a ${age}-year-old understands: 2-4 short sentences, concrete examples over abstract ones.
+- Use the DOCUMENT CONTEXT where it helps. For anything it does not cover, use simple general knowledge.
+- Start your reply with exactly this sentence: ${EXPLORE_SIGNAL}
+- Never claim general knowledge came from a lesson or document.
+- If the question is unsafe or inappropriate for a child, reply instead with exactly: ${EXPLORE_SAFE_REDIRECT} What would you like to learn about?
+- Warm and specific, never generic filler ("Great question!" with nothing after it).
+
+NOTE: ${OCR_MARKER_GUARD}
+
+Write only the child-facing reply. No JSON, no quotation marks around it.`;
+}
+
+// Home Explore (lessonMode=false) general-knowledge answer with a
+// guaranteed honesty signal. Lesson Ask never calls this: its gates return
+// "I don't know based on this lesson." before the model runs.
+async function exploreAnswerWithGeneralKnowledge(
+  body: AskRequest,
+  context: string,
+  question: string,
+  age: number,
+  missingEntity: string | null,
+  timing: { totalTime: number; retrievalTime: number },
+): Promise<NextResponse> {
+  console.log(`[ask] explore generalKnowledge missingEntity=${missingEntity ?? "none"} emptyContext=${!context}`);
+  let rawResponse: string;
+  try {
+    rawResponse = await generateAnswer(buildExplorePrompt(context, question, age, missingEntity), 200);
+  } catch (error) {
+    console.error("[ask] explore LLM error:", error);
+    return NextResponse.json({ error: "Failed to generate a response." }, { status: 500 });
+  }
+  let text = (rawResponse || "").trim();
+  if (!text) {
+    text = "I don't know. Please ask a parent to add more information.";
+    return NextResponse.json(
+      withConversation(body, [text], { answer: text, source: "Document", _timing: timing }),
+      { status: 200 },
+    );
+  }
+  // Deterministic backstop: the honesty signal is contractual, not a wish.
+  // (Skipped only for the safe-redirect reply, which is honest by shape.)
+  if (!text.startsWith(EXPLORE_SAFE_REDIRECT) && !EXPLORE_SIGNAL_RE.test(text)) {
+    text = `${EXPLORE_SIGNAL} ${text}`;
+  }
+  return NextResponse.json(
+    withConversation(body, [text], {
+      answer: text,
+      source: "General",
+      generalKnowledge: true,
+      _timing: timing,
+    }),
+    { status: 200 },
+  );
+}
+
+// Home Explore grading fallback (standalone answer/explanation ONLY): when
+// no usable learning material exists for the question, respond with
+// signaled general knowledge in the mode's own schema instead of grading
+// against nothing. Lesson Ask never calls this — its answer/explanation
+// paths keep requiring lesson-supported context.
+async function exploreGradeWithGeneralKnowledge(
+  body: AskRequest,
+  context: string,
+  question: string,
+  age: number,
+  timing: { totalTime: number; retrievalTime: number },
+): Promise<NextResponse> {
+  const missingEntity = context ? unanswerableEntityFromContext(context, question) : null;
+  console.log(`[ask] explore grade generalKnowledge mode=${body.mode} missingEntity=${missingEntity ?? "none"} emptyContext=${!context}`);
+  let rawResponse: string;
+  try {
+    rawResponse = await generateAnswer(buildExplorePrompt(context, question, age, missingEntity), 200);
+  } catch (error) {
+    console.error("[ask] explore grade LLM error:", error);
+    return NextResponse.json({ error: "Failed to generate a response." }, { status: 500 });
+  }
+  let text = (rawResponse || "").trim();
+  if (!text) {
+    text = "I don't know. Please ask a parent to add more information.";
+    return NextResponse.json(
+      withConversation(body, [text], { answer: text, source: "Document", _timing: timing }),
+      { status: 200 },
+    );
+  }
+  // Same contractual backstop as the question-mode explore path (skipped
+  // only for the safe-redirect reply, which is honest by shape).
+  if (!text.startsWith(EXPLORE_SAFE_REDIRECT) && !EXPLORE_SIGNAL_RE.test(text)) {
+    text = `${EXPLORE_SIGNAL} ${text}`;
+  }
+  if (body.mode === "explanation") {
+    return NextResponse.json(withConversation(body, [text], {
+      type: "explanationFeedback",
+      // Neutral middle: with no material to check against, the rubric
+      // cannot reward cited evidence nor punish its absence.
+      score: 50,
+      feedback: text,
+      finalPrompt: "Want to try another question from the lesson?",
+      source: "General",
+      generalKnowledge: true,
+      _timing: timing,
+    }), { status: 200 });
+  }
+  return NextResponse.json(withConversation(body, [text], {
+    type: "evaluation",
+    correctness: "partial" as const,
+    feedback: text,
+    nextPrompt: GRACEFUL_END_PROMPT,
+    continueLearning: false,
+    hintLevel: 2,
+    source: "General",
+    generalKnowledge: true,
+    _timing: timing,
+  }), { status: 200 });
 }
 
 export async function POST(req: Request) {
@@ -1370,6 +1540,12 @@ export async function POST(req: Request) {
   const questionType = body.questionType || "guided";
   const studentAnswer = (body.studentAnswer || "").trim();
   const explanation = (body.explanation || "").trim();
+  // Guided attempts on this specific question (client-tracked). Clamped so
+  // a hostile or buggy caller cannot force or block the escape hatch.
+  const attemptCount = (() => {
+    const n = Number(body.attemptCount);
+    return Number.isFinite(n) ? Math.max(0, Math.min(10, Math.floor(n))) : 0;
+  })();
 
   if (mode === "question" && !question) {
     return NextResponse.json({ error: "A question is required." }, { status: 400 });
@@ -1441,20 +1617,37 @@ export async function POST(req: Request) {
         { status: 200 }
       );
     }
-    return NextResponse.json(
-      withConversation(body, ["I don't know. Please ask a parent to add more information."], {
-        answer: "I don't know. Please ask a parent to add more information.",
-        source: "Document",
-        _timing: { totalTime, retrievalTime },
-      }),
-      { status: 200 }
-    );
+    // Home Explore (standalone) with nothing retrieved does NOT stop with
+    // "I don't know": question mode falls through to general knowledge,
+    // and answer/explanation grading gets the signaled general-knowledge
+    // fallback in its own schema. Lesson mode still needs real context.
+    if (!lessonMode && mode === "question") {
+      context = "";
+    } else if (!lessonMode) {
+      const totalTime = Date.now() - startTime;
+      return exploreGradeWithGeneralKnowledge(body, "", question, age, {
+        totalTime,
+        retrievalTime,
+      });
+    } else {
+      return NextResponse.json(
+        withConversation(body, ["I don't know. Please ask a parent to add more information."], {
+          answer: "I don't know. Please ask a parent to add more information.",
+          source: "Document",
+          _timing: { totalTime, retrievalTime },
+        }),
+        { status: 200 }
+      );
+    }
   }
 
-  // Honest handling for questions the lesson cannot answer ("why don't
-  // humans have trunks?"). Without this gate the flow asks the child to hunt
-  // for trunk-use clues to a question the lesson never addresses, which is
-  // what frustrated the trunk conversation.
+  // Grounding policy is mode-aware (lessonMode decides, intent is only a
+  // conversational signal inside the prompts, never the router):
+  // - Lesson Ask: the displayed lesson is the whole truth. Anything beyond
+  //   its words is honestly unknown — never reach elsewhere.
+  // - Home Explore: retrieved content is supporting context that does NOT
+  //   need to contain every entity in the question. Partial relevance plus
+  //   signaled general knowledge beats rejection.
   if (mode === "question") {
     // Lesson-linked: anything beyond the displayed lesson's own words is
     // honestly unknown. Never reach into the document for more.
@@ -1473,21 +1666,31 @@ export async function POST(req: Request) {
         { status: 200 },
       );
     }
-    const missingEntity = unanswerableEntityFromContext(context, question);
-    if (missingEntity) {
+    // A missing entity is a REJECTION only in Lesson Ask. In Home Explore
+    // it is an honesty SIGNAL carried into the general-knowledge reply.
+    const missingEntity = context ? unanswerableEntityFromContext(context, question) : null;
+    if (lessonMode) {
+      if (missingEntity) {
+        const totalTime = Date.now() - startTime;
+        const summary = buildAnswerSummary(context, question);
+        const honest =
+          `I don't know about ${missingEntity} — that is not in the text. ` +
+          `${summary} Want to explore what the lesson does say?`;
+        return NextResponse.json(
+          withConversation(body, [honest], {
+            answer: honest,
+            source: "Document",
+            _timing: { totalTime, retrievalTime },
+          }),
+          { status: 200 },
+        );
+      }
+    } else if (!context || missingEntity) {
       const totalTime = Date.now() - startTime;
-      const summary = buildAnswerSummary(context, question);
-      const honest =
-        `I don't know about ${missingEntity} — that is not in the text. ` +
-        `${summary} Want to explore what the lesson does say?`;
-      return NextResponse.json(
-        withConversation(body, [honest], {
-          answer: honest,
-          source: "Document",
-          _timing: { totalTime, retrievalTime },
-        }),
-        { status: 200 },
-      );
+      return exploreAnswerWithGeneralKnowledge(body, context, question, age, missingEntity, {
+        totalTime,
+        retrievalTime,
+      });
     }
   }
 
@@ -1525,6 +1728,16 @@ export async function POST(req: Request) {
     }
 
     if (!contextMatchesQuestion(context, question)) {
+      // Lesson Ask keeps the strict reject: nothing here supports grading.
+      // Home Explore answers from general knowledge with the honesty
+      // signal instead of turning the child away.
+      if (!lessonMode) {
+        const totalTime = Date.now() - startTime;
+        return exploreGradeWithGeneralKnowledge(body, context, question, age, {
+          totalTime,
+          retrievalTime,
+        });
+      }
       console.log("[answer] Context does not match question, rejecting");
       const totalTime = Date.now() - startTime;
       return NextResponse.json(withConversation(body, ["Let me find better information about your question. Please ask it again and I'll help."], {
@@ -1554,6 +1767,40 @@ export async function POST(req: Request) {
       (graded.responseState === "don't_remember" && totalUncertain >= 2) ||
       // Explicit "just tell me" escalation already received the summary.
       (graded.responseState === "don't_remember" && isExplicitAnswerRequest(studentAnswer));
+    // STUCK escape hatch (additive): 3+ attempts on the same question that
+    // still are not landing end gracefully with a plain grounded summary
+    // instead of guiding forever. Correct answers and productive partials
+    // (details remaining) are never cut off by this rule.
+    const stuckByAttempts =
+      attemptCount >= 3 &&
+      graded.responseState !== "correct_and_explained" &&
+      graded.responseState !== "correct_but_no_reasoning" &&
+      graded.responseState !== "partially_correct" &&
+      (graded.correctness === "incorrect" ||
+        graded.responseState === "don't_remember" ||
+        graded.responseState === "don't_know" ||
+        graded.responseState === "off_topic" ||
+        graded.responseState === "guessing" ||
+        graded.responseState === "misconception" ||
+        isExplicitAnswerRequest(studentAnswer));
+    if (stuckByAttempts && graded.graceful !== true) {
+      // buildAnswerSummary already frames itself ("Here is what the lesson
+      // says: ..."), so use it verbatim — no added prefix.
+      const summary = buildAnswerSummary(context, question);
+      const plain = summary;
+      console.log(`[ask] STUCK escape hatch at attempt ${attemptCount} for: "${question.slice(0, 80)}"`);
+      return NextResponse.json(withConversation(body, [`${plain}\n\n${GRACEFUL_END_PROMPT}`], {
+        type: "evaluation",
+        responseState: "don't_remember" as const,
+        correctness: "partial" as const,
+        feedback: plain,
+        nextPrompt: GRACEFUL_END_PROMPT,
+        continueLearning: false,
+        hintLevel: 3,
+        source: "Document",
+        _timing: { totalTime, retrievalTime },
+      }));
+    }
     const continueLearning = !shouldEnd;
     return NextResponse.json(withConversation(body, [`${graded.feedback}\n\n${graded.nextPrompt}`], {
       type: "evaluation",
@@ -1570,6 +1817,15 @@ export async function POST(req: Request) {
 
   if (mode === "explanation") {
     if (!contextMatchesQuestion(context, question)) {
+      // Lesson Ask keeps the strict reject. Home Explore falls back to
+      // signaled general knowledge in the explanation schema.
+      if (!lessonMode) {
+        const totalTime = Date.now() - startTime;
+        return exploreGradeWithGeneralKnowledge(body, context, question, age, {
+          totalTime,
+          retrievalTime,
+        });
+      }
       const totalTime = Date.now() - startTime;
       return NextResponse.json(withConversation(body, ["Let me find better information about your question. Please ask it again and I'll help."], {
         type: "explanationFeedback",
@@ -1619,6 +1875,15 @@ export async function POST(req: Request) {
   const llmTime = Date.now() - llmStart;
 
   const parsed = sanitizeJson(rawResponse);
+  // Single-call intent signal (silent classification inside the guiding
+  // prompt). Logged for tuning; the deterministic coverage/entity gates
+  // above remain the decision-makers for honesty, not the model.
+  try {
+    const rawIntent = parsed && typeof parsed.intent === "string" ? parsed.intent.toUpperCase() : "NONE";
+    console.log(`[ask] intent=${rawIntent} lessonMode=${lessonMode} question="${question.slice(0, 80)}"`);
+  } catch {
+    // logging must never break the response
+  }
   const fallback = buildFallbackResponse(mode, studentAnswer || explanation, questionType, context, question);
   const totalTime = Date.now() - startTime;
   const timing = { totalTime, retrievalTime, llmTime };

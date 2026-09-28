@@ -36,7 +36,7 @@ export default function LearnPage() {
 
         <Link
           href="/upload"
-          className="bg-white shadow px-4 py-2 rounded-full hover:shadow-md"
+          className="bg-white text-slate-800 shadow px-4 py-2 rounded-full hover:shadow-md"
         >
           👩 Parent Dashboard
         </Link>
@@ -157,11 +157,15 @@ export default function LearnPage() {
             className="bg-purple-500 text-white p-6 rounded-3xl shadow-lg hover:bg-purple-600 transition block"
           >
             <div className="text-4xl mb-2">
-              💬
+              🔍
             </div>
 
             <div className="text-xl font-bold">
-              Ask AmigosNest
+              Explore
+            </div>
+
+            <div className="text-sm text-white/90 mt-1">
+              Ask anything, beyond your lessons
             </div>
           </Link>
         </div>

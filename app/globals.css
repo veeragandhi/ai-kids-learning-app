@@ -15,12 +15,11 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+/* NOTE: no prefers-color-scheme: dark override on purpose. The app is
+   designed light-only (color-scheme: light above): flipping --foreground
+   to near-white in dark mode paints every element without an explicit
+   text color (e.g. the home "Parent Dashboard" pill) white-on-white on
+   macOS dark mode. Keep :root light always. */
 
 body {
   background: var(--background);
