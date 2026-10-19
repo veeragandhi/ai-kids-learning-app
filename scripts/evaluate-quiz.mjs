@@ -9,6 +9,9 @@
 //   wrong-mark: correct option present but a distractor is marked answer.
 //   fixed: corrected question passes.
 //   swapped-pair: swapping mismatched option sets improves support.
+//   coref-chain: answer supported via a "This layer…" referent chain.
+//   simile-rescue: "compare … to?" answered by an "is like …" sentence
+//     with no shared words (linked accepted / unlinked still rejected).
 //
 // Optional live check (`--live`, needs dev server + Ollama + sample docs):
 // posts to /api/quiz and asserts shape (3 options, answer in options,
@@ -34,7 +37,8 @@ function valueAfter(flag) {
 
 // ── Answerability logic (mirrors app/api/quiz/route.ts) ────────────────────
 // Keep in sync with the route: QUIZ_STOPWORDS, synonym groups, 0.3 support
-// threshold, top-1 answer sentence, 0.05 answer tolerance.
+// threshold, answer-sentence candidate window (top-1 + neighbors + referent
+// chain), 0.05 answer tolerance.
 
 const QUIZ_STOPWORDS = new Set([
   "what", "which", "how", "who", "why", "when", "where",
@@ -90,6 +94,78 @@ function topSentencesForQuestion(question, context, k = 2) {
   return scored.slice(0, Math.max(1, k)).map((e) => e.s);
 }
 
+// Sentences that can legitimately support an answer to the stem: every
+// sentence tied for best match with the stem's words, their immediate
+// neighbors, and — while one of those leans on a pronoun/demonstrative
+// ("This layer…", "It's…") — the referring chain behind it, so the
+// antecedent ("…the troposphere") counts as support. Stays strictly local
+// so options belonging to a different question (Q5-type) keep failing.
+// window[0] is the stem's answer sentence. Keep in sync with the route.
+function answerCandidateSentences(question, context) {
+  const sentences = quizContextSentences(context);
+  if (sentences.length === 0) return [];
+  const qSet = new Set(expandQuizSynonyms(quizContentWords(question)));
+  const hits = sentences.map((s) => {
+    const sSet = new Set(expandQuizSynonyms(quizContentWords(s)));
+    return [...qSet].filter((w) => sSet.has(w)).length;
+  });
+  const maxHits = Math.max(...hits);
+  const seeds = [];
+  if (maxHits > 0) {
+    hits.forEach((h, i) => {
+      if (h === maxHits) seeds.push(i);
+    });
+  } else {
+    seeds.push(0);
+  }
+  const DEMONSTRATIVE = /^(this|that|these|those|it|its|it's|they|them|their)\b/i;
+  const seen = new Set();
+  const picked = [];
+  const push = (i) => {
+    if (i >= 0 && i < sentences.length && !seen.has(i)) {
+      seen.add(i);
+      picked.push(i);
+    }
+  };
+  seeds.forEach((i) => {
+    push(i);
+    push(i - 1);
+    push(i + 1);
+  });
+  for (let qi = 0; qi < picked.length && picked.length < 10; qi++) {
+    const i = picked[qi];
+    if (!DEMONSTRATIVE.test(sentences[i])) continue;
+    push(i - 1);
+    push(i + 1);
+  }
+  return picked.map((i) => sentences[i]);
+}
+
+// Mirrors app/api/quiz/route.ts linkAnswerSentences: a correct paraphrase
+// whose sentence shares no words with the stem joins the window only when
+// the answer is strongly supported there AND the pair is stem-linked
+// (shared content word, or comparison stem matched by an "is like…"
+// sentence). Unlinked answer sentences stay out (F1/F2 must still fail).
+function linkAnswerSentences(question, answer, context, window) {
+  if (!answer || !question) return window;
+  const sentences = quizContextSentences(context);
+  if (sentences.length === 0) return window;
+  const qWords = new Set(expandQuizSynonyms(quizContentWords(question)));
+  const qRaw = String(question).toLowerCase();
+  const stemCompares = /\b(compare|compared|comparison|resemble|resembles|similar|describe|describes|depict|depicts|like)\b/.test(qRaw);
+  const inWindow = new Set(window);
+  const linked = [];
+  for (const s of sentences) {
+    if (inWindow.has(s)) continue;
+    if (optionSupport(answer, [s]) < 0.5) continue;
+    const sSet = new Set(expandQuizSynonyms(quizContentWords(s)));
+    const shared = [...qWords].filter((w) => sSet.has(w)).length;
+    const compareLink = stemCompares && /\b(like|resembles|similar to|compared to)\b/.test(s.toLowerCase());
+    if (shared > 0 || compareLink) linked.push(s);
+  }
+  return linked.length > 0 ? [...window, ...linked] : window;
+}
+
 function optionSupport(option, sentences) {
   const oWords = expandQuizSynonyms(quizContentWords(option));
   if (oWords.length === 0) return 0;
@@ -112,15 +188,25 @@ function questionBestSupport(question, options, context) {
 
 function isAnswerableQuizQuestion(question, options, answer, context) {
   if (!context || options.length !== 3) return false;
-  const top = topSentencesForQuestion(String(question || ""), context, 1);
-  if (top.length === 0) return false;
-  const supports = options.map((opt) => optionSupport(opt, top));
+  const candidateWindow = linkAnswerSentences(
+    String(question || ""),
+    String(answer || ""),
+    context,
+    answerCandidateSentences(String(question || ""), context)
+  );
+  if (candidateWindow.length === 0) return false;
+  const supports = options.map((opt) => optionSupport(opt, candidateWindow));
   const maxSupport = Math.max(...supports);
   if (maxSupport < 0.3) return false;
-  const answerSupport = optionSupport(String(answer || ""), top);
+  const answerSupport = optionSupport(String(answer || ""), candidateWindow);
   if (answerSupport + 0.05 < maxSupport) return false;
-  const minSupport = Math.min(...supports);
-  if (maxSupport > 0.5 && maxSupport - minSupport < 0.1) return false;
+  // Discrimination is measured on the answer sentence alone: inside the
+  // wider window every option is supported by its own sentence.
+  const answerSentence = [candidateWindow[0]];
+  const topSupports = options.map((opt) => optionSupport(opt, answerSentence));
+  const topMax = Math.max(...topSupports);
+  const topMin = Math.min(...topSupports);
+  if (topMax > 0.5 && topMax - topMin < 0.1) return false;
   return true;
 }
 
@@ -252,6 +338,57 @@ function shapeOk(q) {
   const fixed = [FIXED_Q1, FIXED_Q5].every(shapeOk);
   check("answer-among-choices", broken && fixed,
     broken && fixed ? [] : ["shape gate misbehaves on fixtures"]);
+}
+
+// F8 — referent chain: the answer word lives two sentences back from the
+// stem's sentence ("This layer" → "…called the troposphere"). The
+// candidate window must reach it — without this, every coreference quiz
+// failed answerability and fell into the weak template fallback.
+const COREF_CONTEXT = [
+  "The closest layer to Earth is called the troposphere.",
+  "It's where we live and breathe!",
+  "This layer is where almost all weather happens, including things like storms and rain.",
+  "Warm air takes up more space than cold air, which is why weather changes!",
+].join(" ");
+{
+  const ok = isAnswerableQuizQuestion(
+    "Where does almost all weather happen?",
+    ["In outer space", "In the troposphere", "Under the ground"],
+    "In the troposphere",
+    COREF_CONTEXT,
+  );
+  check("coref-chain-accepted", ok === true,
+    ok ? [] : ["answer in the referent chain ('This layer' -> the troposphere) was not counted as support"]);
+}
+
+// F9 — simile paraphrase rescue: the stem ("compare the atmosphere to?")
+// shares no words with the answer sentence ("…is like a giant blue
+// blanket"), so the sentence must join the window via the comparison link.
+// The same answer WITHOUT the link ("Rain often arrives…") must still fail.
+const SIMILE_CONTEXT = [
+  "Families enjoy sunny days at the park.",
+  "The atmosphere is a layer of gases around Earth.",
+  "Weather forecasts help people dress warmly.",
+  "Rain often arrives without much warning.",
+  "The sky over the ocean is like a giant blue blanket.",
+].join(" ");
+{
+  const linked = isAnswerableQuizQuestion(
+    "What does the text compare the atmosphere to?",
+    ["A rocky mountain", "A giant blue blanket", "A wooden house"],
+    "A giant blue blanket",
+    SIMILE_CONTEXT,
+  );
+  check("simile-rescue-accepted", linked === true,
+    linked ? [] : ["correct simile answer was rejected because its sentence shared no words with the stem"]);
+  const unlinked = isAnswerableQuizQuestion(
+    "What does the text compare the atmosphere to?",
+    ["A giant blue blanket", "Rain without warning", "A wooden house"],
+    "Rain without warning",
+    SIMILE_CONTEXT,
+  );
+  check("unlinked-answer-still-fails", unlinked === false,
+    unlinked ? ["an unrelated fact ('Rain often arrives…') passed as an answer to a comparison stem"] : []);
 }
 
 // ── Optional live check ─────────────────────────────────────────────────────

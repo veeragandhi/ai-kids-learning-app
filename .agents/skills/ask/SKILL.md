@@ -14,7 +14,7 @@ Primary implementation:
 
 - `app/api/ask/route.ts` owns request validation, context lookup, prompt selection, model invocation, response normalization, and fallbacks.
 - `lib/retrieval.ts` creates the query embedding, scores stored chunks, applies `minSimilarity = 0.50`, and returns up to three chunks.
-- `lib/ai.ts` calls the local Ollama `gemma3:1b` model with low temperature and a bounded prediction length.
+- `lib/ai.ts` calls the local Ollama `gemma3:4b` model with low temperature and a bounded prediction length.
 - `app/ask/page.tsx` is the client contract and demonstrates the three-call conversation.
 
 Before editing, identify which of these boundaries controls the behavior. Retrieval problems should be investigated in chunking, embeddings, and similarity before changing prompt wording or model settings.

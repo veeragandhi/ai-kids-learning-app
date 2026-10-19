@@ -1,5 +1,5 @@
 import { chromium } from "playwright";
-import { mkdir, readdir, rename } from "node:fs/promises";
+import { mkdir, rename } from "node:fs/promises";
 import path from "node:path";
 import { convertToMp4, removeFileIfExists } from "./convert-to-mp4.mjs";
 

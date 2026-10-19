@@ -17,8 +17,8 @@ import path from "node:path";
 import process from "node:process";
 
 // ---------------------------------------------------------------- mirrors
-// Mirror of IGNORED_WORDS / ATTRIBUTE_WORDS / stemWord / contentTokens /
-// cleanRetrievalQuery in lib/retrieval.ts. Keep in sync by hand.
+// Mirror of IGNORED_WORDS / stemWord / contentTokens / cleanRetrievalQuery in
+// lib/retrieval.ts. Keep in sync by hand.
 const IGNORED_WORDS = new Set([
   "a", "an", "and", "are", "as", "at", "be", "because", "can", "could", "did", "do",
   "does", "for", "from", "give", "how", "in", "is", "it", "just", "me", "of", "on",
@@ -26,7 +26,6 @@ const IGNORED_WORDS = new Set([
   "to", "was", "were", "what", "when", "where", "which", "who", "why", "with",
   "you", "your", "alike", "different", "need", "needs", "use", "uses", "using",
 ]);
-const ATTRIBUTE_WORDS = new Set(["color", "colour", "favorite", "favourite", "age", "name", "names"]);
 
 function stemWord(word) {
   if (word.endsWith("ies") && word.length > 4) return `${word.slice(0, -3)}y`;
@@ -67,11 +66,6 @@ const ASK_META_WORDS = new Set([
   "think", "thinking", "lesson", "detail", "question", "answer", "clue", "useful",
   "discover", "imagine", "remember", "idea", "ideas", "about",
 ]);
-
-function answerConceptTokens(text) {
-  const aliases = { breathe: "breath", breathing: "breath", breathed: "breath", african: "africa", asian: "asia" };
-  return contentTokens(text).map((t) => aliases[t] || t);
-}
 
 function extractListItems(text) {
   const lists = [];

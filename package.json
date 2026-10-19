@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test:isolation": "node scripts/test-per-child-isolation.mjs",
     "evaluate:ask": "node .agents/skills/ask/scripts/evaluate-ask.mjs",
     "evaluate:quiz": "node scripts/evaluate-quiz.mjs",
     "evaluate:lesson": "node scripts/evaluate-lesson.mjs",
@@ -18,6 +19,7 @@
     "video:social:capture": "node scripts/social-video/capture-shots.mjs"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.117.3",
     "lucide-react": "^1.16.0",
     "next": "16.2.4",
     "openai": "^6.37.0",

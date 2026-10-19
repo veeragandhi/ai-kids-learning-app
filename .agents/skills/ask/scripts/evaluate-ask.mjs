@@ -132,7 +132,10 @@ async function runScenario(scenario) {
     const result = await fetch(`${baseUrl.replace(/\/$/, "")}/api/ask`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...scenario.payload, mode: scenario.mode }),
+      // V1 per-child isolation: the API requires a verified childId. Default
+      // to the local demo child (override with ASK_CHILD_ID); run this eval
+      // against a Supabase-unconfigured dev server so demo-local is accepted.
+      body: JSON.stringify({ childId: process.env.ASK_CHILD_ID || "demo-local", ...scenario.payload, mode: scenario.mode }),
     });
     const response = await result.json();
     return evaluateResponse(scenario, result.status, response, Date.now() - started);
