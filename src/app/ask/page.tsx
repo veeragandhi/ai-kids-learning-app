@@ -11,6 +11,7 @@ import {
   lastLessonKey } from "@/lib/store";
 import { useLearner } from "@/contexts/LearnerContext";
 import { apiFetch } from "@/lib/supabase/authedFetch";
+import VoiceTextarea from "@/components/VoiceTextarea";
 
 type AskStage = "ask" | "guided" | "answer" | "done";
 
@@ -528,10 +529,11 @@ function AskInner() {
             <div className="space-y-6">
               <div>
                 <label className="text-sm font-semibold text-slate-700">Your Question</label>
-                <textarea
+                <VoiceTextarea
                   value={question}
-                  onChange={(e) => setQuestion(e.target.value)}
+                  onChange={setQuestion}
                   rows={4}
+                  ariaLabel="Your question"
                   className="mt-2 w-full rounded-3xl border border-slate-200 bg-white p-4 text-slate-900 shadow-sm placeholder:text-slate-400 [color-scheme:light] focus:border-indigo-400 focus:outline-none"
                   placeholder="What do you want to learn from your document?"
                 />
@@ -605,10 +607,11 @@ function AskInner() {
               {stage === "guided" && (
                 <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
                   <h2 className="text-lg font-semibold text-slate-900">Your answer</h2>
-                  <textarea
+                  <VoiceTextarea
                     value={studentAnswer}
-                    onChange={(e) => setStudentAnswer(e.target.value)}
+                    onChange={setStudentAnswer}
                     rows={4}
+                    ariaLabel="Your answer"
                     className="mt-3 w-full rounded-3xl border border-slate-200 bg-white p-4 text-slate-900 placeholder:text-slate-400 [color-scheme:light] focus:border-indigo-400 focus:outline-none"
                     placeholder="Write your answer here..."
                   />
@@ -626,10 +629,11 @@ function AskInner() {
                 <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-6 shadow-sm">
                   <h2 className="text-lg font-semibold text-slate-900">Keep thinking</h2>
                   <p className="mt-3 whitespace-pre-line text-slate-700">{response.nextPrompt}</p>
-                  <textarea
+                  <VoiceTextarea
                     value={studentAnswer}
-                    onChange={(e) => setStudentAnswer(e.target.value)}
+                    onChange={setStudentAnswer}
                     rows={4}
+                    ariaLabel="Your answer"
                     className="mt-4 w-full rounded-3xl border border-slate-200 bg-white p-4 text-slate-900 placeholder:text-slate-400 [color-scheme:light] focus:border-indigo-400 focus:outline-none"
                     placeholder="Tell me what you think in your own words."
                   />
@@ -647,10 +651,11 @@ function AskInner() {
                 <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-6 shadow-sm">
                   <h2 className="text-lg font-semibold text-slate-900">Explain your thinking</h2>
                   <div className="mt-6">
-                    <textarea
+                    <VoiceTextarea
                       value={explanation}
-                      onChange={(e) => setExplanation(e.target.value)}
+                      onChange={setExplanation}
                       rows={4}
+                      ariaLabel="Your explanation"
                       className="w-full rounded-3xl border border-slate-200 bg-white p-4 text-slate-900 placeholder:text-slate-400 [color-scheme:light] focus:border-indigo-400 focus:outline-none"
                       placeholder="Explain how you knew your answer."
                     />

@@ -172,6 +172,8 @@ Check these before attributing a regression to the model:
 - A verbose or overly enthusiastic fallback can accidentally reveal the answer, praise unsupported facts, or make the child-facing flow inconsistent with the Socratic plan.
 - The model may return another language or a yes/no question even when prompted otherwise; language, brevity, and question shape need deterministic validation or a safe fallback.
 - Repeated "I don't remember"/"I don't know" answers can loop if uncertainty is misclassified as off-topic or if uncertainty-state counting requires all previous answers to be uncertain. Uncertainty detection must catch flexible spellings, and the graceful-end counter must use a sliding window of recent answers (see "Uncertainty And Graceful Ending").
+- Lesson coverage can misread question-frame verbs ("can you explain…", "describe…", "what is the purpose…") as untaught entities, turning a covered question into "I don't know based on this lesson." These words are meta, not content; `ASK_META_WORDS` must skip them. Scenario `lesson-explain-frame-covered` guards this.
+- Evidence/clue selection can latch onto filler from a neighbouring sentence or a passive fact ("like to travel with their families", "used often for…") and produce a meaningless clue ("look for the part about like/often"). `pickEvidenceTerm`/`pickClueTerm` must skip comparison and generic words so the clue names a concrete lesson fact ("smell"). Scenario `lesson-explain-frame-covered` also guards these filler clues.
 
 When debugging, capture the request mode, retrieval count and scores, prompt schema, model availability, parse result, and final normalized response. Do not log sensitive child content more broadly than the existing local diagnostics require.
 

@@ -257,6 +257,31 @@ const VAGUE_LIST_WORDS = new Set([
 const ASK_META_WORDS = new Set([
   "think", "thinking", "lesson", "detail", "question", "answer", "clue", "useful",
   "discover", "imagine", "remember", "idea", "ideas", "about",
+  // Question-frame verbs: a child asking "can you explain what the trunk is
+  // used for?" is naming the lesson entity (trunk). "explain"/"describe" are
+  // how they ask, not lesson content, so they must not fail lesson coverage
+  // (which turned an answerable question into "I don't know based on this
+  // lesson"). Stemmed forms included where stemWord differs.
+  "explain", "describe", "describ", "mean", "purpose", "purpos", "function",
+  "work", "happen",
+]);
+
+// Words that can appear inside a captured fact/list but point at nothing a
+// child can look up. A passive lesson line ("the trunk is used often for
+// grabbing food") used to yield the clue "look for the part about often";
+// the same happened with "many", "like", and other filler. Clue/evidence
+// selection must land on a concrete content word.
+const GENERIC_CLUE_WORDS = new Set([
+  "often", "usually", "sometimes", "always", "never", "also", "even", "just",
+  "really", "very", "much", "many", "more", "most", "some", "any", "all",
+  "another", "other", "different", "special", "important", "amazing", "big",
+  "small", "tiny", "long", "large", "good", "great", "best", "first", "next",
+  "last", "own", "same", "like", "such", "example", "part", "thing", "things",
+  "way", "ways", "kind", "kinds", "type", "types", "lot", "lots", "around",
+  "help", "helps", "make", "makes", "made", "get", "gets", "got", "put",
+  "puts", "take", "takes", "give", "gives", "go", "goes", "come", "comes",
+  "can", "could", "will", "would", "should", "may", "might", "must", "able",
+  "need", "needs", "use", "used", "uses", "using", "have", "has", "had",
 ]);
 
 function extractListItems(text: string) {
@@ -397,8 +422,16 @@ function bestFactList(context: string, question: string) {
   return combined;
 }
 
+function isConcreteClueWord(token: string) {
+  return (
+    token.length > 2 &&
+    !ASK_META_WORDS.has(token) &&
+    !GENERIC_CLUE_WORDS.has(token)
+  );
+}
+
 function pickClueTerm(context: string, question: string) {
-  const questionTokens = contentTokens(question).filter((token) => !ASK_META_WORDS.has(token));
+  const questionTokens = contentTokens(question).filter(isConcreteClueWord);
   const contextTokenList = contentTokens(context);
   const shared = [...questionTokens].reverse().find((token) => contextTokenList.includes(token));
   // Return the original word from the context, not the stemmed token
@@ -406,12 +439,12 @@ function pickClueTerm(context: string, question: string) {
   if (shared) return findOriginalWord(context, shared);
 
   const fact = bestFactList(context, question)
-    .flatMap((item) => contentTokens(item).filter((token) => !ASK_META_WORDS.has(token)));
+    .flatMap((item) => contentTokens(item).filter(isConcreteClueWord));
   if (fact.length > 0) {
     return findOriginalWord(context, fact[0]);
   }
 
-  const fallback = contextTokenList.find((token) => !ASK_META_WORDS.has(token)) || "this";
+  const fallback = contextTokenList.find(isConcreteClueWord) || "this";
   return findOriginalWord(context, fallback);
 }
 
@@ -419,11 +452,19 @@ function pickEvidenceTerm(context: string, question: string) {
   const facts = bestFactList(context, question);
   // Prefer a substantive phrase ("smell food") over a lone fragment
   // ("smell"): a bare word reads meaningless in "the part about X" clues.
-  // With no substantive phrase, the shared-token clue below ("trunks")
-  // beats the fragment.
-  const substantive = facts.find((fact) => contentTokens(fact).length > 1);
-  if (substantive) {
-    const token = contentTokens(substantive).find((item) => item.length > 2);
+  // Comparison/filler list items ("just like you use your nose") and single
+  // fragments ("africa") are not evidence, even when their sentence happens
+  // to sit in the same two-sentence window. Walk past them (and past
+  // generic words such as "often") until a concrete content word remains, so
+  // the clue names the lesson fact ("smell") rather than "like"/"often".
+  for (const fact of facts) {
+    if (
+      contentTokens(fact).length <= 1 ||
+      /^(?:just\s+)?like\b|^such as\b|^for example\b/i.test(fact.trim())
+    ) {
+      continue;
+    }
+    const token = contentTokens(fact).find(isConcreteClueWord);
     if (token) return findOriginalWord(context, token);
   }
   return pickClueTerm(context, question);

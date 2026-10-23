@@ -210,6 +210,13 @@
     "expect": { "noContextOrUncertainty": true }
   },
   {
+    "id": "lesson-explain-frame-covered",
+    "description": "A question-frame verb (explain) must not fail lesson coverage when the lesson teaches the asked-about entity; guidance, not an I-dont-know refusal",
+    "mode": "question",
+    "payload": { "source": "lesson", "lessonTopic": "Elephant Trunk", "lessonText": "Elephant Trunk\n\nElephants are the biggest animals on land! They live in Africa and Asia and like to travel with their families.\n\nAn elephant's trunk is like a nose and a hand all in one. Their trunk is used often for smelling, drinking, and picking up food. They also use their trunks to touch each other and communicate.", "question": "can you explain what elephant trunk is used for", "age": 8, "questionType": "guided" },
+    "expect": { "questionType": "guided", "notRepeatQuestion": true, "notYesNo": true, "evidence": ["trunk"], "responseMustNotInclude": ["part about often", "part about like"] }
+  },
+  {
     "id": "standalone-source-lock",
     "description": "Explicit standalone source keeps document retrieval working as before",
     "mode": "question",

@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test:isolation": "node scripts/test-per-child-isolation.mjs",
+    "test:speech": "node scripts/test-speech-input.mjs",
     "evaluate:ask": "node .agents/skills/ask/scripts/evaluate-ask.mjs",
     "evaluate:quiz": "node scripts/evaluate-quiz.mjs",
     "evaluate:lesson": "node scripts/evaluate-lesson.mjs",
