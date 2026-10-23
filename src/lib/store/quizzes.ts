@@ -31,3 +31,7 @@ export async function getQuizAttempt(
 export async function listQuizAttempts(childId: string): Promise<QuizAttempt[]> {
   return attempts.listFor(childId);
 }
+
+export async function deleteQuizAttemptsForChild(childId: string): Promise<void> {
+  return attempts.deleteAllFor(childId);
+}

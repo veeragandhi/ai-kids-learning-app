@@ -24,3 +24,7 @@ export async function saveProgress(
 export async function listProgress(childId: string): Promise<ProgressEntry[]> {
   return entries.listFor(childId);
 }
+
+export async function deleteProgressForChild(childId: string): Promise<void> {
+  return entries.deleteAllFor(childId);
+}

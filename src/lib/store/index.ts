@@ -9,3 +9,4 @@ export * from "./lessons";
 export * from "./quizzes";
 export * from "./ask";
 export * from "./progress";
+export * from "./deleteChildData";

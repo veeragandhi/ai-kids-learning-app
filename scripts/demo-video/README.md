@@ -12,7 +12,9 @@ and the guided-thinking replies come from the real model.
 | `record-b.mjs` | Demo B — parent dashboard |
 | `record-c.mjs` | Demo C — upload → AI lesson |
 | `record-d.mjs` | Demo D — guided thinking → quiz |
+| `record-f-explore.mjs` | Demo F — Home Explore questions across a child's lessons |
 | `build-videos.mjs` | Trims the raw captures, draws the corner label, exports MP4 + poster, writes `qa-report.json` |
+| `build-consolidated.mjs` | Combines the parent dashboard, lesson workflow, guided Ask, quiz, and Explore into one upload-ready walkthrough |
 | `frames.mjs` | Frame-diff analysis used to find dead time and to QA the exports |
 
 ## Requirements
@@ -43,3 +45,13 @@ and the guided-thinking replies come from the real model.
   poster frame.
 - The demo parent (`demo.parent@amigosnest.test`) and child (Milo, 🐯, age 7)
   are fictional. Point `rec-common.mjs` at your own account if you re-record.
+- `record-f-explore.mjs` records real questions and answers from the Home
+  Explore entry using the child's Plants and Elephants materials. Standalone
+  Explore retrieves from all documents owned by that child, then grounds each
+  response in the most relevant retrieved chunks; it does not load every saved
+  lesson body into one prompt. It exports
+  `artifacts/amigosnest-demos/amigosnest-explore.mp4` and its poster directly.
+- `build-consolidated.mjs` combines the parent dashboard, upload-to-lesson,
+  guided Ask, quiz, and Explore clips in that order. The separate child-hub
+  overview is intentionally omitted because it reopened the same saved
+  elephant lesson immediately after the lesson-generation clip.

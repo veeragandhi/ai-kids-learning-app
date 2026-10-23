@@ -268,6 +268,78 @@ export const lessonStorage = {
     return this.delete(id);
   },
 
+  async deleteAllOwned(childId: string): Promise<void> {
+    if (!isBrowser() || !childId) {
+      if (!childId) throw new Error("lessonStorage.deleteAllOwned() requires childId");
+      return;
+    }
+    let deletedIds: string[];
+    if (!hasIndexedDB()) {
+      const raw = localStorage.getItem(LEGACY_LOCAL_KEY);
+      const parsed: unknown = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(parsed)) throw new Error("Invalid local lesson data");
+      deletedIds = parsed
+        .filter((lesson) => lesson?.childId === childId)
+        .map((lesson) => lesson.id);
+      localStorage.setItem(
+        LEGACY_LOCAL_KEY,
+        JSON.stringify(parsed.filter((lesson) => lesson?.childId !== childId))
+      );
+    } else {
+      const db = await openDb();
+      try {
+        deletedIds = await new Promise<string[]>((resolve, reject) => {
+          let settled = false;
+          const finish = (error?: Error, ids: string[] = []) => {
+            if (settled) return;
+            settled = true;
+            try {
+              db.close();
+            } catch {
+              // ignore close errors
+            }
+            if (error) reject(error);
+            else resolve(ids);
+          };
+          try {
+            const transaction = db.transaction(STORE_NAME, "readwrite");
+            const store = transaction.objectStore(STORE_NAME);
+            const request = store.getAll();
+            let ids: string[] = [];
+            request.onerror = () => finish(request.error ?? new Error("lesson read failed"));
+            request.onsuccess = () => {
+              try {
+                const owned = ((request.result as StoredLesson[]) ?? [])
+                  .filter((lesson) => lesson.childId === childId);
+                ids = owned.map((lesson) => lesson.id);
+                for (const lesson of owned) store.delete(lesson.id);
+              } catch (error) {
+                transaction.abort();
+                finish(error instanceof Error ? error : new Error("lesson delete failed"));
+              }
+            };
+            transaction.oncomplete = () => finish(undefined, ids);
+            transaction.onerror = () => finish(transaction.error ?? new Error("lesson delete failed"));
+            transaction.onabort = () => finish(transaction.error ?? new Error("lesson delete aborted"));
+          } catch (error) {
+            finish(error instanceof Error ? error : new Error("lesson delete failed"));
+          }
+        });
+      } finally {
+        try {
+          db.close();
+        } catch {
+          // ignore close errors
+        }
+      }
+    }
+
+    localStorage.removeItem(activeKeyFor(childId));
+    if (deletedIds.includes(localStorage.getItem(ACTIVE_KEY) || "")) {
+      localStorage.removeItem(ACTIVE_KEY);
+    }
+  },
+
   async delete(id: string): Promise<void> {
     if (!isBrowser() || !id) return;
     if (!hasIndexedDB()) {

@@ -134,3 +134,13 @@ export function deleteChunksByDocument(
     );
   }
 }
+
+/** Delete every vector owned by one child, failing explicitly on storage errors. */
+export function deleteChunksForChild(childId: string): number {
+  if (!childId) throw new Error("A childId is required to delete vector chunks");
+  const existing = JSON.parse(fs.readFileSync(vectorFile, "utf-8")) as VectorDocumentChunk[];
+  if (!Array.isArray(existing)) throw new Error("Invalid vector store format");
+  const remaining = existing.filter((chunk) => chunk.childId !== childId);
+  fs.writeFileSync(vectorFile, JSON.stringify(remaining, null, 2), "utf-8");
+  return existing.length - remaining.length;
+}

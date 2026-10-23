@@ -92,6 +92,69 @@ export function createChildScopedStore<T extends OwnedRecord>(
   }
 
   return {
+    async deleteAllFor(childId: string): Promise<void> {
+      if (!isBrowser() || !childId) {
+        if (!childId) throw new Error("store.deleteAllFor() requires childId");
+        return;
+      }
+      if (!hasIndexedDB()) {
+        const raw = localStorage.getItem(fallbackKey);
+        if (!raw) return;
+        const parsed: unknown = JSON.parse(raw);
+        if (!Array.isArray(parsed)) throw new Error(`Invalid local data in ${fallbackKey}`);
+        localStorage.setItem(
+          fallbackKey,
+          JSON.stringify(parsed.filter((record) => record?.childId !== childId))
+        );
+        return;
+      }
+
+      const db = await openDb(dbName, storeName, 1);
+      try {
+        await new Promise<void>((resolve, reject) => {
+          let settled = false;
+          const finish = (error?: Error) => {
+            if (settled) return;
+            settled = true;
+            try {
+              db.close();
+            } catch {
+              // ignore close errors
+            }
+            if (error) reject(error);
+            else resolve();
+          };
+          try {
+            const tx = db.transaction(storeName, "readwrite");
+            tx.oncomplete = () => finish();
+            tx.onerror = () => finish(tx.error ?? new Error("delete failed"));
+            tx.onabort = () => finish(tx.error ?? new Error("delete aborted"));
+            const store = tx.objectStore(storeName);
+            const request = store.getAll();
+            request.onerror = () => finish(request.error ?? new Error("read failed"));
+            request.onsuccess = () => {
+              try {
+                for (const record of (request.result as T[]) ?? []) {
+                  if (record.childId === childId) store.delete(record.id);
+                }
+              } catch (error) {
+                tx.abort();
+                finish(error instanceof Error ? error : new Error("delete failed"));
+              }
+            };
+          } catch (error) {
+            finish(error instanceof Error ? error : new Error("delete failed"));
+          }
+        });
+      } finally {
+        try {
+          db.close();
+        } catch {
+          // ignore close errors
+        }
+      }
+    },
+
     async save(record: T): Promise<T> {
       if (!isBrowser()) throw new Error("store.save() requires a browser");
       if (!record || !record.id || !record.childId) {

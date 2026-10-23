@@ -108,6 +108,10 @@ function evaluateResponse(scenario, status, response, elapsedMs) {
     failures.push(`response contains none of the expected grounding signals: ${expect.evidence.join(", ")}`);
   }
 
+  if (expect.responseMustInclude && !includesAll(responseText, expect.responseMustInclude)) {
+    failures.push(`response is missing required content: ${expect.responseMustInclude.join(", ")}`);
+  }
+
   if (expect.mustNotLeakEvidence && hasAnswerLeak(response, expect.mustNotLeakEvidence)) {
     failures.push("response contains all forbidden answer-leakage terms");
   }

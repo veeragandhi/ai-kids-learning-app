@@ -189,3 +189,36 @@ export function addDocument(
     saveDocuments(documents);
   }
 }
+
+/**
+ * Remove only documents stored in the verified child's local namespace.
+ * Returns the document names so callers can also remove their vector chunks.
+ */
+export function deleteDocumentsForChild(childId: string): string[] {
+  if (!childId) throw new Error("A childId is required to delete documents");
+  const documents = getDocuments();
+  const owned = documents.filter((doc) => doc.childId === childId && !doc.legacy);
+  const childDirectory = path.resolve(uploadDir, childId) + path.sep;
+  const files = owned.map((doc) => {
+    const resolved = resolveDocPath(doc.name);
+    if (!resolved || !resolved.startsWith(childDirectory)) {
+      throw new Error(`Refusing to delete a document outside the child's storage: ${doc.name}`);
+    }
+    return { name: doc.name, path: resolved };
+  });
+
+  for (const file of files) {
+    if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+  }
+
+  saveDocuments(documents.filter((doc) => doc.childId !== childId));
+  const directory = path.resolve(uploadDir, childId);
+  if (fs.existsSync(directory) && fs.statSync(directory).isDirectory()) {
+    try {
+      fs.rmdirSync(directory);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOTEMPTY") throw error;
+    }
+  }
+  return owned.map((doc) => doc.name);
+}

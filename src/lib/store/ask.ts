@@ -24,3 +24,7 @@ export async function saveAskSession(
 export async function listAskSessions(childId: string): Promise<AskSession[]> {
   return sessions.listFor(childId);
 }
+
+export async function deleteAskSessionsForChild(childId: string): Promise<void> {
+  return sessions.deleteAllFor(childId);
+}

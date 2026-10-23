@@ -111,12 +111,73 @@ function AskInner() {
   // "resumed" note so the child knows nothing was lost). Cleared on the
   // next question/answer/reset.
   const [resumed, setResumed] = useState(false);
+  const [speakingTurn, setSpeakingTurn] = useState<number | null>(null);
+  const speechUtterance = useRef<SpeechSynthesisUtterance | null>(null);
   // Lesson-linked Ask: when arriving from /lesson, the displayed lesson is
   // the grounding context (same sessionStorage handoff as Quiz).
   const [{ lessonTopic, lessonText }, setLessonRef] = useState({
     lessonTopic: "",
     lessonText: "",
   });
+
+  useEffect(() => {
+    return () => {
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
+
+  const toggleReplySpeech = (index: number, text: string) => {
+    if (
+      typeof window === "undefined" ||
+      !("speechSynthesis" in window) ||
+      !("SpeechSynthesisUtterance" in window)
+    ) {
+      setError("Audio playback is not available in this browser.");
+      return;
+    }
+    const synthesis = window.speechSynthesis;
+    if (speakingTurn === index) {
+      synthesis.cancel();
+      speechUtterance.current = null;
+      setSpeakingTurn(null);
+      return;
+    }
+
+    synthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    const voices = synthesis.getVoices();
+    let preferredName: string | null = null;
+    try {
+      preferredName = localStorage.getItem("amigosnest-voice");
+    } catch {
+      // Use the browser's default voice when local storage is unavailable.
+    }
+    utterance.voice =
+      voices.find((voice) => voice.name === preferredName) ??
+      voices.find((voice) => (voice.lang || "").toLowerCase().startsWith("en")) ??
+      null;
+    utterance.rate = 0.95;
+    utterance.pitch = 1.2;
+    utterance.volume = 1;
+    utterance.onstart = () => setSpeakingTurn(index);
+    utterance.onend = () => {
+      if (speechUtterance.current === utterance) {
+        speechUtterance.current = null;
+        setSpeakingTurn(null);
+      }
+    };
+    utterance.onerror = () => {
+      if (speechUtterance.current === utterance) {
+        speechUtterance.current = null;
+        setSpeakingTurn(null);
+        setError("Audio playback could not start. Please try again.");
+      }
+    };
+    speechUtterance.current = utterance;
+    synthesis.speak(utterance);
+  };
 
   // Draft scope for this visit (stable per child + lesson context).
   const draftScope = useMemo(
@@ -519,6 +580,16 @@ function AskInner() {
                       {turn.role === "child" ? "Child" : "AmigosNest"}
                     </p>
                     <p className="mt-1 whitespace-pre-wrap">{turn.content}</p>
+                    {turn.role === "assistant" && (
+                      <button
+                        type="button"
+                        onClick={() => toggleReplySpeech(index, turn.content)}
+                        className="mt-3 inline-flex items-center rounded-full bg-violet-100 px-3 py-1.5 text-sm font-semibold text-violet-800 transition hover:bg-violet-200 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:ring-offset-2"
+                        aria-label={`${speakingTurn === index ? "Stop listening to" : "Listen to"} AmigosNest reply`}
+                      >
+                        {speakingTurn === index ? "Stop listening" : "Listen"}
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>

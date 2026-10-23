@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServer } from "@/lib/supabase";
+import { extractBearerToken, verifyChildOwnership } from "@/lib/supabase/requireChild";
 import type { ChildPreferences, Database } from "@/types/database.types";
+import { deleteDocumentsForChild } from "@/lib/documents";
+import { deleteChunksForChild } from "@/lib/vectorStore";
 
 type ChildInsert = Database["public"]["Tables"]["children"]["Insert"];
 
@@ -68,4 +71,72 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 500 });
   }
   return NextResponse.json({ child: data });
+}
+
+export async function DELETE(req: Request) {
+  let body: { childId?: unknown };
+  try {
+    body = (await req.json()) as { childId?: unknown };
+  } catch {
+    return NextResponse.json({ error: "A valid childId is required." }, { status: 400 });
+  }
+
+  const verified = await verifyChildOwnership(req, body.childId);
+  if (!verified.ok) {
+    return NextResponse.json({ error: verified.error }, { status: verified.status });
+  }
+
+  const token = extractBearerToken(req);
+  if (!token) {
+    return NextResponse.json({ error: "Parent sign-in is required." }, { status: 401 });
+  }
+  const supabase = getSupabaseServer(token);
+  if (!supabase) {
+    return NextResponse.json({ error: "Profile service is unavailable. Try again later." }, { status: 503 });
+  }
+
+  const { data, error } = await supabase
+    .from("children")
+    .delete()
+    .eq("id", verified.childId)
+    .eq("parent_id", verified.parentId)
+    .select("id")
+    .maybeSingle();
+
+  if (error) {
+    console.error("[children] delete failed:", {
+      code: error.code,
+      message: error.message,
+      childId: verified.childId,
+      parentId: verified.parentId,
+    });
+    return NextResponse.json({ error: "Unable to delete this child profile. Please try again." }, { status: 500 });
+  }
+  if (!data) {
+    return NextResponse.json({ error: "This child profile is not available to your account." }, { status: 404 });
+  }
+
+  try {
+    const documentNames = deleteDocumentsForChild(verified.childId);
+    const deletedChunks = deleteChunksForChild(verified.childId);
+    console.log("[children] deleted child learning materials:", {
+      childId: verified.childId,
+      documents: documentNames.length,
+      chunks: deletedChunks,
+    });
+  } catch (cleanupError) {
+    console.error("[children] child profile deleted but local document cleanup failed:", {
+      childId: verified.childId,
+      error: cleanupError,
+    });
+    return NextResponse.json(
+      {
+        error: "The child profile was deleted, but some local learning materials could not be removed.",
+        profileDeleted: true,
+      },
+      { status: 500 },
+    );
+  }
+
+  return NextResponse.json({ success: true });
 }

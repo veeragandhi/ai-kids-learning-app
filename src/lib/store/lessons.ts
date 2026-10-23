@@ -45,6 +45,10 @@ export async function deleteLesson(id: string, childId: string): Promise<void> {
   return lessonStorage.deleteOwned(id, childId);
 }
 
+export async function deleteLessonsForChild(childId: string): Promise<void> {
+  return lessonStorage.deleteAllOwned(childId);
+}
+
 /** Copy a legacy lesson into the child's namespace (new id, original kept). */
 export async function importLegacyLesson(
   id: string,

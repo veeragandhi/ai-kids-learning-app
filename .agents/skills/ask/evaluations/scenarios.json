@@ -70,6 +70,44 @@
     "expect": { "correctness": "correct", "evidence": ["breathing", "smelling", "drinking", "grasping"], "nextPrompt": "How do you know?" }
   },
   {
+    "id": "elephant-trunk-smelling-partial",
+    "description": "Smelling is recognized as one supported trunk use, not rejected because other uses are also in the lesson",
+    "mode": "answer",
+    "payload": {
+      "source": "lesson",
+      "lessonTopic": "Elephants",
+      "lessonText": "Elephants use their trunks to smell food, pick up grass and leaves, drink water, touch and communicate with other elephants, breathe, and make sounds.",
+      "question": "What does an elephant use its trunk for?",
+      "age": 8,
+      "guidingQuestion": "What jobs does the lesson list for an elephant's trunk?",
+      "studentAnswer": "It helps to smell things."
+    },
+    "expect": {
+      "correctness": "partial",
+      "feedbackMustInclude": ["smell"],
+      "feedbackMustNotInclude": ["not in the lesson"],
+      "nextPrompt": "What other detail does the lesson give about trunk?"
+    }
+  },
+  {
+    "id": "elephant-trunk-multiple-clues",
+    "description": "A broad guided trunk-use question points to multiple evidence areas without listing the answers",
+    "mode": "question",
+    "payload": {
+      "source": "lesson",
+      "lessonTopic": "Elephants",
+      "lessonText": "Elephants use their trunks to smell food, pick up grass and leaves, drink water, touch and communicate with other elephants, breathe, and make sounds.",
+      "question": "What does an elephant use its trunk for?",
+      "age": 8,
+      "questionType": "guided"
+    },
+    "expect": {
+      "questionType": "guided",
+      "responseMustInclude": ["several clues", "food", "water", "other elephants"],
+      "mustNotLeakEvidence": ["smelling", "picking up", "drinking", "touching", "breathing"]
+    }
+  },
+  {
     "id": "present-in-context",
     "description": "A clearly stated fact can produce a grounded guiding question",
     "mode": "question",

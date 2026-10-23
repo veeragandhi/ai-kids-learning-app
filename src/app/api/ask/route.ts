@@ -288,7 +288,10 @@ function extractListItems(text: string) {
   const lists: string[][] = [];
   const patterns = [
     { re: /\b(?:need|needs|needed)\s+([^.?!]+)/gi, needsPurpose: false },
-    { re: /\b(?:use|uses|used)\s+(?:its\s+\w+\s+)?(?:for\s+)?([^.?!]+)/gi, needsPurpose: true },
+    {
+      re: /\b(?:use|uses|used)\s+(?:(?:its|their|his|her|the|a|an|it|them)\s+)?(?:\w+\s+)?(?:to|for)\s+([^.?!]+)/gi,
+      needsPurpose: true,
+    },
     { re: /\blive in\s+([^.?!]+)/gi, needsPurpose: false },
   ];
 
@@ -299,7 +302,7 @@ function extractListItems(text: string) {
       // skip it so summaries never read "their trunks very carefully".
       if (needsPurpose && !/\b(to|for)\b/i.test(match[1])) continue;
       const parts = match[1]
-        .split(/,|;|\/|\band\b|\bor\b/i)
+        .split(/,|;|\/|\band\b|\bor\b|\r?\n/i)
         .map((part) => cleanFactPhrase(part))
         .filter((part) => {
           const tokens = contentTokens(part).filter((token) => !VAGUE_LIST_WORDS.has(token));
@@ -310,6 +313,27 @@ function extractListItems(text: string) {
   }
 
   return lists;
+}
+
+function isTrunkUseQuestion(question: string) {
+  return /\btrunks?\b/i.test(question) &&
+    /\b(?:use|uses|used|useful|do|does|can|help|helps|job|jobs|purpose|function|for)\b/i.test(question);
+}
+
+function trunkUseFactList(context: string): string[] {
+  const uses = [
+    ["smelling", /\bsmell(?:s|ed|ing)?\b/i],
+    ["picking up", /\b(?:pick(?:s|ed|ing)?\s+up|grab(?:s|bed|bing)?)\b/i],
+    ["drinking", /\b(?:drink(?:s|ing)?|suck(?:s|ed|ing)?\s+up\s+water)\b/i],
+    ["touching", /\btouch(?:es|ed|ing)?\b/i],
+    ["communicating", /\b(?:communicat(?:e|es|ed|ing)|talk(?:s|ed|ing)?)\b/i],
+    ["breathing", /\bbreath(?:e|es|ed|ing)?\b/i],
+    ["making sounds", /\bmake(?:s|made|making)?\s+sounds?\b/i],
+  ] as const;
+
+  return uses
+    .filter(([, pattern]) => pattern.test(context))
+    .map(([fact]) => fact);
 }
 
 // List fragments are interpolated into child-facing feedback and summaries,
@@ -355,6 +379,11 @@ function listItemMatched(studentAnswer: string, item: string) {
 }
 
 function bestFactList(context: string, question: string) {
+  if (isTrunkUseQuestion(question)) {
+    const trunkFacts = trunkUseFactList(context);
+    if (trunkFacts.length > 0) return trunkFacts;
+  }
+
   const questionTokens = new Set(contentTokens(question));
   const sentences = context.split(/(?<=[.!?])\s+/);
   const ranked = sentences
@@ -482,6 +511,16 @@ function buildContextGuidingQuestion(
   question: string,
   questionType: "guided" | "creative"
 ) {
+  if (questionType === "guided" && isTrunkUseQuestion(question) && trunkUseFactList(context).length > 1) {
+    const clueAreas = [
+      /\bfood\b/i.test(context) ? "food" : null,
+      /\bwater\b/i.test(context) ? "water" : null,
+      /\b(?:touch|communicat|talk)\w*\b/i.test(context) ? "other elephants" : null,
+    ].filter((item): item is string => item !== null);
+    const clue = clueAreas.length > 0 ? ` Look at the parts about ${joinListGrammar(clueAreas)}.` : "";
+    return `The lesson gives several clues about trunk jobs.${clue} What different jobs can you find?`;
+  }
+
   const topic = pickClueTerm(context, question);
   const evidence = pickEvidenceTerm(context, question);
 
@@ -1959,6 +1998,19 @@ export async function POST(req: Request) {
       feedback: graded.feedback,
       finalPrompt: graded.finalPrompt,
       retry: "retry" in graded && graded.retry === true,
+      source: "Document",
+      _timing: { totalTime, retrievalTime },
+    }));
+  }
+
+  if (mode === "question" && questionType === "guided" && isTrunkUseQuestion(question) && trunkUseFactList(context).length > 1) {
+    const guidedQuestion = buildContextGuidingQuestion(context, question, questionType);
+    const totalTime = Date.now() - startTime;
+    return NextResponse.json(withConversation(body, [guidedQuestion], {
+      type: "guidingQuestion",
+      question: guidedQuestion,
+      hintLevel: 1,
+      questionType,
       source: "Document",
       _timing: { totalTime, retrievalTime },
     }));

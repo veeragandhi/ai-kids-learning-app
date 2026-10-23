@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useLearner } from "@/contexts/LearnerContext";
 import type { ChildPreferences } from "@/types/database.types";
+import { deleteChildLearningData } from "@/lib/store";
 
 interface Child {
   id: string;
@@ -22,6 +23,7 @@ export default function ProfilePage() {
   const [age, setAge] = useState(8);
   const [avatar, setAvatar] = useState("🦊");
   const [loading, setLoading] = useState(false);
+  const [deletingChildId, setDeletingChildId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [user, setUser] = useState<User | null>(null);
   const router = useRouter();
@@ -81,6 +83,64 @@ export default function ProfilePage() {
       setMessage(e instanceof Error ? e.message : "Failed to add child.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const deleteChild = async (child: Child) => {
+    const confirmed = window.confirm(
+      `Permanently delete ${child.nickname}'s profile, uploaded documents, generated lessons, and learning history? This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setDeletingChildId(child.id);
+    setMessage("");
+    try {
+      const supabase = getSupabase();
+      if (!supabase) throw new Error("Supabase not configured.");
+      const token = (await supabase.auth.getSession()).data.session?.access_token;
+      if (!token) throw new Error("Parent sign-in is required.");
+      const res = await fetch("/api/children", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ childId: child.id }),
+      });
+      const data = await res.json();
+      if (data.profileDeleted) {
+        setChildren((current) => current.filter((item) => item.id !== child.id));
+        if (learner?.id === child.id) {
+          setLearner(null);
+          router.push("/");
+        }
+        try {
+          await deleteChildLearningData(child.id);
+        } catch (cleanupError) {
+          console.error("[profile] local child learning data cleanup failed:", cleanupError);
+          setMessage(`${data.error} Some learning history could not be cleared from this browser.`);
+          return;
+        }
+        setMessage(data.error);
+        return;
+      }
+      if (!res.ok) throw new Error(data.error || "Failed to delete child profile.");
+
+      setChildren((current) => current.filter((item) => item.id !== child.id));
+      if (learner?.id === child.id) {
+        setLearner(null);
+        router.push("/");
+      }
+      try {
+        await deleteChildLearningData(child.id);
+        setMessage(`${child.nickname}'s profile and learning data were deleted.`);
+      } catch (cleanupError) {
+        console.error("[profile] local child learning data cleanup failed:", cleanupError);
+        setMessage(
+          `${child.nickname}'s profile and uploaded documents were deleted, but some learning history could not be cleared from this browser.`
+        );
+      }
+    } catch (e: unknown) {
+      setMessage(e instanceof Error ? e.message : "Failed to delete child profile.");
+    } finally {
+      setDeletingChildId(null);
     }
   };
 
@@ -154,7 +214,7 @@ export default function ProfilePage() {
                 />
                 <button
                   onClick={addChild}
-                  disabled={loading}
+                  disabled={loading || deletingChildId !== null}
                   className="bg-green-500 text-white px-4 py-2 rounded-xl"
                 >
                   {loading ? "Adding..." : "Add Child"}
@@ -177,9 +237,18 @@ export default function ProfilePage() {
                       </div>
                       <button
                         onClick={() => startAs(c)}
+                        disabled={loading || deletingChildId !== null}
                         className="bg-blue-500 text-white text-sm px-3 py-2 rounded-xl hover:bg-blue-600"
                       >
                         Learn as {c.nickname} →
+                      </button>
+                      <button
+                        onClick={() => deleteChild(c)}
+                        disabled={loading || deletingChildId !== null}
+                        aria-label={`Delete ${c.nickname} profile and data`}
+                        className="rounded-xl border border-red-200 px-3 py-2 text-sm text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {deletingChildId === c.id ? "Deleting..." : "Delete"}
                       </button>
                     </div>
                   ))}
